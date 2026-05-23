@@ -73,6 +73,7 @@ namespace CSProtocol {
 // ---------------------------------------------------------------------------
 static void hook_unpack(CSProtocol::COMDT_HERO_COMMON_INFO* instance) {
     if (!CSProtocol::saveData::enable) return;
+    if (instance == nullptr) return;
     if (instance->getdwHeroID() == CSProtocol::saveData::heroId
         && CSProtocol::saveData::heroId != 0
         && CSProtocol::saveData::skinId != 0)
@@ -82,9 +83,10 @@ static void hook_unpack(CSProtocol::COMDT_HERO_COMMON_INFO* instance) {
     }
 }
 
-// COMDT_HERO_COMMON_INFO::unpack(TdrReadBuf& srcBuf, uint32 cutVer) – 0x6F7424C
+// COMDT_HERO_COMMON_INFO::unpack(TdrReadBuf& srcBuf, uint32 cutVer)
 static int32_t (*_unpack)(void* instance, void* srcBuf, uint32_t cutVer);
 static int32_t new_unpack(void* instance, void* srcBuf, uint32_t cutVer) {
+    if (!_unpack) return 0;
     int32_t result = _unpack(instance, srcBuf, cutVer);
     if (unlockskin)
         hook_unpack((CSProtocol::COMDT_HERO_COMMON_INFO*)instance);
@@ -92,7 +94,7 @@ static int32_t new_unpack(void* instance, void* srcBuf, uint32_t cutVer) {
 }
 
 // ---------------------------------------------------------------------------
-// CRoleInfo::IsCanUseSkin(heroId, skinId, includeHeroConditions) – 0x4126238
+// CRoleInfo::IsCanUseSkin(heroId, skinId, includeHeroConditions)
 // ---------------------------------------------------------------------------
 static bool (*_IsCanUseSkin)(void* instance, uint32_t heroId, uint32_t skinId, bool includeHeroConditions);
 static bool new_IsCanUseSkin(void* instance, uint32_t heroId, uint32_t skinId, bool includeHeroConditions) {
@@ -101,23 +103,25 @@ static bool new_IsCanUseSkin(void* instance, uint32_t heroId, uint32_t skinId, b
             CSProtocol::saveData::setData(heroId, (uint16_t)skinId);
         return true;
     }
+    if (!_IsCanUseSkin) return false;
     return _IsCanUseSkin(instance, heroId, skinId, includeHeroConditions);
 }
 
 // ---------------------------------------------------------------------------
 // CRoleInfo::IsHaveHeroSkin(heroId, skinId, isIncludeLimitSkin,
-//                            bCheckHaveCanAcceptForeverGift) – 0x412513C
+//                            bCheckHaveCanAcceptForeverGift)
 // ---------------------------------------------------------------------------
 static bool (*_IsHaveHeroSkin)(void* instance, uint32_t heroId, uint32_t skinId,
                                 bool isIncludeLimitSkin, bool bCheckHaveCanAcceptForeverGift);
 static bool new_IsHaveHeroSkin(void* instance, uint32_t heroId, uint32_t skinId,
                                 bool isIncludeLimitSkin, bool bCheckHaveCanAcceptForeverGift) {
     if (unlockskin) return true;
+    if (!_IsHaveHeroSkin) return false;
     return _IsHaveHeroSkin(instance, heroId, skinId, isIncludeLimitSkin, bCheckHaveCanAcceptForeverGift);
 }
 
 // ---------------------------------------------------------------------------
-// CSelectHeroFormLogic::GetHeroWearSkinId(heroID) – virtual 0x7DCCCDC
+// CSelectHeroFormLogic::GetHeroWearSkinId(heroID) – virtual
 // ---------------------------------------------------------------------------
 static uint32_t (*_GetHeroWearSkinId)(void* instance, uint32_t heroID);
 static uint32_t new_GetHeroWearSkinId(void* instance, uint32_t heroID) {
@@ -125,11 +129,12 @@ static uint32_t new_GetHeroWearSkinId(void* instance, uint32_t heroID) {
         CSProtocol::saveData::setEnable(true);
         return CSProtocol::saveData::skinId;
     }
+    if (!_GetHeroWearSkinId) return 0;
     return _GetHeroWearSkinId(instance, heroID);
 }
 
 // ---------------------------------------------------------------------------
-// CSelectHeroFormLogic::WearHeroSkin(heroID, skinID) – virtual 0x7DC7A58
+// CSelectHeroFormLogic::WearHeroSkin(heroID, skinID) – virtual
 // ---------------------------------------------------------------------------
 static void (*_WearHeroSkin)(void* instance, uint32_t heroID, uint32_t skinID);
 static void new_WearHeroSkin(void* instance, uint32_t heroID, uint32_t skinID) {
@@ -137,18 +142,30 @@ static void new_WearHeroSkin(void* instance, uint32_t heroID, uint32_t skinID) {
         CSProtocol::saveData::setData(heroID, (uint16_t)skinID);
         CSProtocol::saveData::setEnable(true);
     }
-    _WearHeroSkin(instance, heroID, skinID);
+    if (_WearHeroSkin) _WearHeroSkin(instance, heroID, skinID);
 }
 
 // ---------------------------------------------------------------------------
-// Helper: register all skin-unlock hooks (call from hack_injec)
+// Register all skin-unlock hooks via Il2CppGetMethodOffset (handles ASLR)
 // ---------------------------------------------------------------------------
-static void RegisterSkinHooks(uintptr_t base) {
-    auto addr = [&](uintptr_t off) { return reinterpret_cast<void*>(base + off); };
+static void RegisterSkinHooks() {
+    void* addr;
 
-    DobbyHook(addr(0x6F7424C), (void*)new_unpack,           (void**)&_unpack);
-    DobbyHook(addr(0x4126238), (void*)new_IsCanUseSkin,     (void**)&_IsCanUseSkin);
-    DobbyHook(addr(0x412513C), (void*)new_IsHaveHeroSkin,   (void**)&_IsHaveHeroSkin);
-    DobbyHook(addr(0x7DCCCDC), (void*)new_GetHeroWearSkinId,(void**)&_GetHeroWearSkinId);
-    DobbyHook(addr(0x7DC7A58), (void*)new_WearHeroSkin,     (void**)&_WearHeroSkin);
+    // Scripts.Plugins.dll – CSProtocol.COMDT_HERO_COMMON_INFO
+    addr = Il2CppGetMethodOffset("Scripts.Plugins.dll", "CSProtocol", "COMDT_HERO_COMMON_INFO", "unpack", 2);
+    if (addr) DobbyHook(addr, (void*)new_unpack, (void**)&_unpack);
+
+    // Scripts.Base.dll – Assets.Scripts.GameSystem.CRoleInfo
+    addr = Il2CppGetMethodOffset("Scripts.Base.dll", "Assets.Scripts.GameSystem", "CRoleInfo", "IsCanUseSkin", 3);
+    if (addr) DobbyHook(addr, (void*)new_IsCanUseSkin, (void**)&_IsCanUseSkin);
+
+    addr = Il2CppGetMethodOffset("Scripts.Base.dll", "Assets.Scripts.GameSystem", "CRoleInfo", "IsHaveHeroSkin", 4);
+    if (addr) DobbyHook(addr, (void*)new_IsHaveHeroSkin, (void**)&_IsHaveHeroSkin);
+
+    // Scripts.System.dll – Assets.Scripts.GameSystem.CSelectHeroFormLogic
+    addr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "GetHeroWearSkinId", 1);
+    if (addr) DobbyHook(addr, (void*)new_GetHeroWearSkinId, (void**)&_GetHeroWearSkinId);
+
+    addr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "WearHeroSkin", 2);
+    if (addr) DobbyHook(addr, (void*)new_WearHeroSkin, (void**)&_WearHeroSkin);
 }

@@ -101,12 +101,13 @@ int (*org_get_objCamp)(void* instance);
 
 bool (*org_get_Visible)(void* instance);
 bool new_get_Visible(void* instance) {
-    if (instance != nullptr && ShowVisible) {
+    if (instance != nullptr && ShowVisible && org_get_objCamp) {
         COM_PLAYERCAMP camp = (COM_PLAYERCAMP) org_get_objCamp(instance);
         if (camp == ComPlayercamp1 || camp == ComPlayercamp2) {
             return true;
         }
     }
+    if (!org_get_Visible) return false;
     return org_get_Visible(instance);
 }
 
@@ -840,10 +841,11 @@ void hack_injec() {
 
   // Antifog: hook get_Visible on ActorLinker, force visible for enemy camps
   org_get_objCamp = (int (*)(void*)) Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_objCamp", 0);
-  DobbyHook(Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_Visible", 0), (void*)new_get_Visible, (void**)&org_get_Visible);
+  void* visAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_Visible", 0);
+  if (visAddr) DobbyHook(visAddr, (void*)new_get_Visible, (void**)&org_get_Visible);
 
   // Unlock Skin hooks
-  RegisterSkinHooks(il2cpp_base);
+  RegisterSkinHooks();
 
   // DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "Namespace", "class", "method", 0), (void*)new_hook, (void**)&org_func);
   ImGuiOK = true;
