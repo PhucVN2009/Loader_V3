@@ -86,6 +86,29 @@ int new_skin(void*instance) {
     return org_skin(instance);
 }
 
+// public bool get_Visible() { }
+// public COM_PLAYERCAMP get_objCamp() { }
+enum COM_PLAYERCAMP {
+    ComPlayercampMid = 0,
+    ComPlayercamp1   = 1,
+    ComPlayercamp2   = 2,
+};
+
+bool ShowVisible = false;
+
+int (*org_get_objCamp)(void* instance);
+
+bool (*org_get_Visible)(void* instance);
+bool new_get_Visible(void* instance) {
+    if (instance != nullptr && ShowVisible) {
+        COM_PLAYERCAMP camp = (COM_PLAYERCAMP) org_get_objCamp(instance);
+        if (camp == ComPlayercamp1 || camp == ComPlayercamp2) {
+            return true;
+        }
+    }
+    return org_get_Visible(instance);
+}
+
 
 
 
@@ -513,9 +536,9 @@ void DrawMenu() {
     if (activeFeature == 0) {
         ImGui::Checkbox("Set Skin", &SkinHack);
         ImGui::SliderInt("ID", &skinID, 1, 49);
-       
-        
-    } 
+        ImGui::Separator();
+        ImGui::Checkbox("Show Enemy (Antifog)", &ShowVisible);
+    }
     else if (activeFeature == 1) {
         ImGui::Columns(2, "deviceInfo", false);
 
@@ -801,8 +824,11 @@ void hack_injec() {
   Il2CppAttach("libil2cpp.so");
   // Write Your bypass/AutoUpdate Hooks
   DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "", "GameParamsScript", "get_playerSkin", 0), (void*)new_skin, (void**)&org_skin);
-  
-  
+
+  // Antifog: hook get_Visible on ActorLinker, force visible for enemy camps
+  org_get_objCamp = (int (*)(void*)) Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_objCamp", 0);
+  DobbyHook(Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_Visible", 0), (void*)new_get_Visible, (void**)&org_get_Visible);
+
   // DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "Namespace", "class", "method", 0), (void*)new_hook, (void**)&org_func);
   ImGuiOK = true;
 }
