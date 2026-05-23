@@ -845,7 +845,21 @@ void hack_injec() {
   if (visAddr) DobbyHook(visAddr, (void*)new_get_Visible, (void**)&org_get_Visible);
 
   // Unlock Skin hooks
-  RegisterSkinHooks();
+  void* skAddr;
+  skAddr = Il2CppGetMethodOffset("Scripts.Plugins.dll", "CSProtocol", "COMDT_HERO_COMMON_INFO", "unpack", 2);
+  if (skAddr) DobbyHook(skAddr, (void*)new_unpack, (void**)&_unpack);
+
+  skAddr = Il2CppGetMethodOffset("Scripts.Base.dll", "Assets.Scripts.GameSystem", "CRoleInfo", "IsCanUseSkin", 3);
+  if (skAddr) DobbyHook(skAddr, (void*)new_IsCanUseSkin, (void**)&_IsCanUseSkin);
+
+  skAddr = Il2CppGetMethodOffset("Scripts.Base.dll", "Assets.Scripts.GameSystem", "CRoleInfo", "IsHaveHeroSkin", 4);
+  if (skAddr) DobbyHook(skAddr, (void*)new_IsHaveHeroSkin, (void**)&_IsHaveHeroSkin);
+
+  skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "GetHeroWearSkinId", 1);
+  if (skAddr) DobbyHook(skAddr, (void*)new_GetHeroWearSkinId, (void**)&_GetHeroWearSkinId);
+
+  skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "WearHeroSkin", 2);
+  if (skAddr) DobbyHook(skAddr, (void*)new_WearHeroSkin, (void**)&_WearHeroSkin);
 
   // DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "Namespace", "class", "method", 0), (void*)new_hook, (void**)&org_func);
   ImGuiOK = true;

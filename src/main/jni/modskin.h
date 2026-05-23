@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <vector>
 #include <utility>
-#include "AutoUpdate/IL2CppSDKGenerator/Il2Cpp.h"
 
 // COMDT_HERO_COMMON_INFO field offsets (from dump)
 // dwHeroID : 0x8  (uint32)
@@ -146,27 +145,3 @@ static void new_WearHeroSkin(void* instance, uint32_t heroID, uint32_t skinID) {
     if (_WearHeroSkin) _WearHeroSkin(instance, heroID, skinID);
 }
 
-// ---------------------------------------------------------------------------
-// Register all skin-unlock hooks via Il2CppGetMethodOffset (handles ASLR)
-// ---------------------------------------------------------------------------
-static void RegisterSkinHooks() {
-    void* addr;
-
-    // Scripts.Plugins.dll – CSProtocol.COMDT_HERO_COMMON_INFO
-    addr = Il2CppGetMethodOffset("Scripts.Plugins.dll", "CSProtocol", "COMDT_HERO_COMMON_INFO", "unpack", 2);
-    if (addr) DobbyHook(addr, (void*)new_unpack, (void**)&_unpack);
-
-    // Scripts.Base.dll – Assets.Scripts.GameSystem.CRoleInfo
-    addr = Il2CppGetMethodOffset("Scripts.Base.dll", "Assets.Scripts.GameSystem", "CRoleInfo", "IsCanUseSkin", 3);
-    if (addr) DobbyHook(addr, (void*)new_IsCanUseSkin, (void**)&_IsCanUseSkin);
-
-    addr = Il2CppGetMethodOffset("Scripts.Base.dll", "Assets.Scripts.GameSystem", "CRoleInfo", "IsHaveHeroSkin", 4);
-    if (addr) DobbyHook(addr, (void*)new_IsHaveHeroSkin, (void**)&_IsHaveHeroSkin);
-
-    // Scripts.System.dll – Assets.Scripts.GameSystem.CSelectHeroFormLogic
-    addr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "GetHeroWearSkinId", 1);
-    if (addr) DobbyHook(addr, (void*)new_GetHeroWearSkinId, (void**)&_GetHeroWearSkinId);
-
-    addr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "WearHeroSkin", 2);
-    if (addr) DobbyHook(addr, (void*)new_WearHeroSkin, (void**)&_WearHeroSkin);
-}
