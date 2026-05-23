@@ -7,14 +7,8 @@
 // dwHeroID : 0x8  (uint32)
 // wSkinID  : 0x3A (uint16)
 
-bool unlockskin   = false; // mode 1: auto (click in-game)  mode 2: custom id
-bool unlockbutton = false; // unlock skin button: set heroid2+skinid2
-
-int skinMode = 0; // 0 = auto, 1 = custom
-int heroid   = 0;
-int skinid   = 0;
-int heroid2  = 0;
-int skinid2  = 0;
+bool unlockskin   = false;
+bool unlockbutton = false;
 
 namespace CSProtocol {
 
@@ -100,8 +94,7 @@ static int32_t new_unpack(void* instance, void* srcBuf, uint32_t cutVer) {
 static bool (*_IsCanUseSkin)(void* instance, uint32_t heroId, uint32_t skinId, bool includeHeroConditions);
 static bool new_IsCanUseSkin(void* instance, uint32_t heroId, uint32_t skinId, bool includeHeroConditions) {
     if (unlockskin || unlockbutton) {
-        // Auto mode: capture whatever skin the game sends us
-        if (unlockskin && skinMode == 0 && heroId != 0)
+        if (heroId != 0)
             CSProtocol::saveData::setData(heroId, (uint16_t)skinId);
         return true;
     }
@@ -141,10 +134,26 @@ static uint32_t new_GetHeroWearSkinId(void* instance, uint32_t heroID) {
 static void (*_WearHeroSkin)(void* instance, uint32_t heroID, uint32_t skinID);
 static void new_WearHeroSkin(void* instance, uint32_t heroID, uint32_t skinID) {
     if ((unlockskin || unlockbutton) && instance != nullptr && skinID != 0) {
-        // Auto mode: capture skin from in-game click
-        if (skinMode == 0)
-            CSProtocol::saveData::setData(heroID, (uint16_t)skinID);
+        CSProtocol::saveData::setData(heroID, (uint16_t)skinID);
         CSProtocol::saveData::setEnable(true);
     }
     if (_WearHeroSkin) _WearHeroSkin(instance, heroID, skinID);
+}
+
+// ---------------------------------------------------------------------------
+// CSelectHeroFormLogic::CheckHeroSkinAvailable(heroID, skinID) – unlock button
+// Hooks both base class and CNormalSelectHeroFormLogic override
+// ---------------------------------------------------------------------------
+static bool (*_CheckHeroSkinAvailable)(void* inst, uint32_t heroID, uint32_t skinID);
+static bool new_CheckHeroSkinAvailable(void* inst, uint32_t heroID, uint32_t skinID) {
+    if (unlockbutton) return true;
+    if (!_CheckHeroSkinAvailable) return false;
+    return _CheckHeroSkinAvailable(inst, heroID, skinID);
+}
+
+static bool (*_CheckHeroSkinAvailable_N)(void* inst, uint32_t heroID, uint32_t skinID);
+static bool new_CheckHeroSkinAvailable_N(void* inst, uint32_t heroID, uint32_t skinID) {
+    if (unlockbutton) return true;
+    if (!_CheckHeroSkinAvailable_N) return false;
+    return _CheckHeroSkinAvailable_N(inst, heroID, skinID);
 }

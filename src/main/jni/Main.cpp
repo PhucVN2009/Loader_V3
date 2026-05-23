@@ -113,9 +113,7 @@ bool new_get_Visible(void* instance) {
     return org_get_Visible(instance);
 }
 
-// Hook SetVisible(bLogicVisible, bMeshVisible):
-// Prevents game from freezing enemy position when they leave sight.
-// bLogicVisible=false stops position updates — we force it true for enemies.
+// Hook ActorLinker::SetVisible(bLogicVisible, bMeshVisible)
 void (*_ActorSetVisible)(void* instance, bool bLogicVisible, bool bMeshVisible);
 void new_ActorSetVisible(void* instance, bool bLogicVisible, bool bMeshVisible) {
     if (ShowVisible && isEnemyCamp(instance)) {
@@ -123,6 +121,16 @@ void new_ActorSetVisible(void* instance, bool bLogicVisible, bool bMeshVisible) 
         bMeshVisible  = true;
     }
     if (_ActorSetVisible) _ActorSetVisible(instance, bLogicVisible, bMeshVisible);
+}
+
+// SGC::SetActorVisibilityImpl(ref SGW.SetActorVisibilityParam& param)
+// param struct layout: objID @ 0x20, visible_bool @ 0x28
+// Forcing visible_bool=1 keeps enemy actors logically visible so position updates continue.
+void (*_SetActorVisibilityImpl)(void* paramPtr);
+void new_SetActorVisibilityImpl(void* paramPtr) {
+    if (ShowVisible && paramPtr)
+        *(uint8_t*)((uint64_t)paramPtr + 0x28) = 1;
+    if (_SetActorVisibilityImpl) _SetActorVisibilityImpl(paramPtr);
 }
 
 
@@ -561,26 +569,7 @@ void DrawMenu() {
             if (!unlockskin) CSProtocol::saveData::resetArrayUnpackSkin();
         }
         if (unlockskin) {
-            ImGui::SameLine();
-            // Mode toggle buttons
-            ImGui::PushID("skinmode");
-            if (ImGui::Button(skinMode == 0 ? "[Auto]" : " Auto ", ImVec2(80, 0)))
-                skinMode = 0;
-            ImGui::SameLine();
-            if (ImGui::Button(skinMode == 1 ? "[Custom]" : " Custom ", ImVec2(90, 0)))
-                skinMode = 1;
-            ImGui::PopID();
-
-            if (skinMode == 0) {
-                ImGui::TextColored(ImColor(0,255,180), "Bat len roi chon skin trong man chon tuong la tu dong ap dung.");
-            } else {
-                ImGui::InputInt("Hero ID", &heroid);
-                ImGui::InputInt("Skin ID", &skinid);
-                if (ImGui::Button("Apply##skin")) {
-                    CSProtocol::saveData::setData((uint32_t)heroid, (uint16_t)skinid);
-                    CSProtocol::saveData::setEnable(true);
-                }
-            }
+            ImGui::TextColored(ImColor(0, 255, 180), "Vao man chon tuong -> bam chon skin de ap dung.");
         }
 
         ImGui::Separator();
@@ -590,12 +579,7 @@ void DrawMenu() {
             if (!unlockbutton) CSProtocol::saveData::resetArrayUnpackSkin();
         }
         if (unlockbutton) {
-            ImGui::InputInt("Hero ID 2", &heroid2);
-            ImGui::InputInt("Skin ID 2", &skinid2);
-            if (ImGui::Button("Apply##btn")) {
-                CSProtocol::saveData::setData((uint32_t)heroid2, (uint16_t)skinid2);
-                CSProtocol::saveData::setEnable(true);
-            }
+            ImGui::TextColored(ImColor(0, 255, 180), "Mo khoa nut skin. Bam chon skin de ap dung.");
         }
     }
     else if (activeFeature == 1) {
@@ -890,9 +874,12 @@ void hack_injec() {
   void* visAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_Visible", 0);
   if (visAddr) DobbyHook(visAddr, (void*)new_get_Visible, (void**)&org_get_Visible);
 
-  // Fix enemy frozen position: intercept SetVisible so bLogicVisible stays true
   void* svAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "SetVisible", 2);
   if (svAddr) DobbyHook(svAddr, (void*)new_ActorSetVisible, (void**)&_ActorSetVisible);
+
+  // SGC::SetActorVisibilityImpl – force visible_bool=1 so enemy positions stay live
+  void* sviAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "SetActorVisibilityImpl", 1);
+  if (sviAddr) DobbyHook(sviAddr, (void*)new_SetActorVisibilityImpl, (void**)&_SetActorVisibilityImpl);
 
   // Unlock Skin hooks
   void* skAddr;
@@ -910,6 +897,13 @@ void hack_injec() {
 
   skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "WearHeroSkin", 2);
   if (skAddr) DobbyHook(skAddr, (void*)new_WearHeroSkin, (void**)&_WearHeroSkin);
+
+  // Unlock Button: make skin buttons clickable for skins the player doesn't own
+  skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "CheckHeroSkinAvailable", 2);
+  if (skAddr) DobbyHook(skAddr, (void*)new_CheckHeroSkinAvailable, (void**)&_CheckHeroSkinAvailable);
+
+  skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CNormalSelectHeroFormLogic", "CheckHeroSkinAvailable", 2);
+  if (skAddr) DobbyHook(skAddr, (void*)new_CheckHeroSkinAvailable_N, (void**)&_CheckHeroSkinAvailable_N);
 
   // DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "Namespace", "class", "method", 0), (void*)new_hook, (void**)&org_func);
   ImGuiOK = true;
