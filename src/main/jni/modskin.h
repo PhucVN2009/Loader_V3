@@ -7,13 +7,14 @@
 // dwHeroID : 0x8  (uint32)
 // wSkinID  : 0x3A (uint16)
 
-bool unlockskin   = false;
-bool unlockbutton = false;
+bool unlockskin   = false; // mode 1: auto (click in-game)  mode 2: custom id
+bool unlockbutton = false; // unlock skin button: set heroid2+skinid2
 
-int heroid  = 0;
-int skinid  = 0;
-int heroid2 = 0;
-int skinid2 = 0;
+int skinMode = 0; // 0 = auto, 1 = custom
+int heroid   = 0;
+int skinid   = 0;
+int heroid2  = 0;
+int skinid2  = 0;
 
 namespace CSProtocol {
 
@@ -88,7 +89,7 @@ static int32_t (*_unpack)(void* instance, void* srcBuf, uint32_t cutVer);
 static int32_t new_unpack(void* instance, void* srcBuf, uint32_t cutVer) {
     if (!_unpack) return 0;
     int32_t result = _unpack(instance, srcBuf, cutVer);
-    if (unlockskin)
+    if (unlockskin || unlockbutton)
         hook_unpack((CSProtocol::COMDT_HERO_COMMON_INFO*)instance);
     return result;
 }
@@ -98,8 +99,9 @@ static int32_t new_unpack(void* instance, void* srcBuf, uint32_t cutVer) {
 // ---------------------------------------------------------------------------
 static bool (*_IsCanUseSkin)(void* instance, uint32_t heroId, uint32_t skinId, bool includeHeroConditions);
 static bool new_IsCanUseSkin(void* instance, uint32_t heroId, uint32_t skinId, bool includeHeroConditions) {
-    if (unlockskin) {
-        if (heroId != 0)
+    if (unlockskin || unlockbutton) {
+        // Auto mode: capture whatever skin the game sends us
+        if (unlockskin && skinMode == 0 && heroId != 0)
             CSProtocol::saveData::setData(heroId, (uint16_t)skinId);
         return true;
     }
@@ -115,7 +117,7 @@ static bool (*_IsHaveHeroSkin)(void* instance, uint32_t heroId, uint32_t skinId,
                                 bool isIncludeLimitSkin, bool bCheckHaveCanAcceptForeverGift);
 static bool new_IsHaveHeroSkin(void* instance, uint32_t heroId, uint32_t skinId,
                                 bool isIncludeLimitSkin, bool bCheckHaveCanAcceptForeverGift) {
-    if (unlockskin) return true;
+    if (unlockskin || unlockbutton) return true;
     if (!_IsHaveHeroSkin) return false;
     return _IsHaveHeroSkin(instance, heroId, skinId, isIncludeLimitSkin, bCheckHaveCanAcceptForeverGift);
 }
@@ -125,7 +127,7 @@ static bool new_IsHaveHeroSkin(void* instance, uint32_t heroId, uint32_t skinId,
 // ---------------------------------------------------------------------------
 static uint32_t (*_GetHeroWearSkinId)(void* instance, uint32_t heroID);
 static uint32_t new_GetHeroWearSkinId(void* instance, uint32_t heroID) {
-    if (unlockskin) {
+    if (unlockskin || unlockbutton) {
         CSProtocol::saveData::setEnable(true);
         return CSProtocol::saveData::skinId;
     }
@@ -138,10 +140,11 @@ static uint32_t new_GetHeroWearSkinId(void* instance, uint32_t heroID) {
 // ---------------------------------------------------------------------------
 static void (*_WearHeroSkin)(void* instance, uint32_t heroID, uint32_t skinID);
 static void new_WearHeroSkin(void* instance, uint32_t heroID, uint32_t skinID) {
-    if (unlockskin && instance != nullptr && skinID != 0) {
-        CSProtocol::saveData::setData(heroID, (uint16_t)skinID);
+    if ((unlockskin || unlockbutton) && instance != nullptr && skinID != 0) {
+        // Auto mode: capture skin from in-game click
+        if (skinMode == 0)
+            CSProtocol::saveData::setData(heroID, (uint16_t)skinID);
         CSProtocol::saveData::setEnable(true);
     }
     if (_WearHeroSkin) _WearHeroSkin(instance, heroID, skinID);
 }
-

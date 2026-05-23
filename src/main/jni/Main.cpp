@@ -555,10 +555,48 @@ void DrawMenu() {
         ImGui::Separator();
         ImGui::Checkbox("Show Enemy (Antifog)", &ShowVisible);
         ImGui::Separator();
+
+        // ── Unlock Skin ────────────────────────────────────────────────
         if (ImGui::Checkbox("Unlock Skin", &unlockskin)) {
             if (!unlockskin) CSProtocol::saveData::resetArrayUnpackSkin();
         }
-        if (unlockskin) ImGui::TextDisabled("Bat len, chon skin trong game la tu dong ap dung");
+        if (unlockskin) {
+            ImGui::SameLine();
+            // Mode toggle buttons
+            ImGui::PushID("skinmode");
+            if (ImGui::Button(skinMode == 0 ? "[Auto]" : " Auto ", ImVec2(80, 0)))
+                skinMode = 0;
+            ImGui::SameLine();
+            if (ImGui::Button(skinMode == 1 ? "[Custom]" : " Custom ", ImVec2(90, 0)))
+                skinMode = 1;
+            ImGui::PopID();
+
+            if (skinMode == 0) {
+                ImGui::TextColored(ImColor(0,255,180), "Bat len roi chon skin trong man chon tuong la tu dong ap dung.");
+            } else {
+                ImGui::InputInt("Hero ID", &heroid);
+                ImGui::InputInt("Skin ID", &skinid);
+                if (ImGui::Button("Apply##skin")) {
+                    CSProtocol::saveData::setData((uint32_t)heroid, (uint16_t)skinid);
+                    CSProtocol::saveData::setEnable(true);
+                }
+            }
+        }
+
+        ImGui::Separator();
+
+        // ── Unlock Button ──────────────────────────────────────────────
+        if (ImGui::Checkbox("Unlock Button", &unlockbutton)) {
+            if (!unlockbutton) CSProtocol::saveData::resetArrayUnpackSkin();
+        }
+        if (unlockbutton) {
+            ImGui::InputInt("Hero ID 2", &heroid2);
+            ImGui::InputInt("Skin ID 2", &skinid2);
+            if (ImGui::Button("Apply##btn")) {
+                CSProtocol::saveData::setData((uint32_t)heroid2, (uint16_t)skinid2);
+                CSProtocol::saveData::setEnable(true);
+            }
+        }
     }
     else if (activeFeature == 1) {
         ImGui::Columns(2, "deviceInfo", false);
