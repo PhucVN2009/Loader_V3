@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <vector>
 #include <utility>
+#include "AutoUpdate/IL2CppSDKGenerator/Il2Cpp.h"
 
 // COMDT_HERO_COMMON_INFO field offsets (from dump)
 // dwHeroID : 0x8  (uint32)
