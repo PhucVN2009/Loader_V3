@@ -73,68 +73,105 @@ using zygisk::ServerSpecializeArgs;
 char packageName[] = "com.levelinfinite.sgameGlobal.midaspay";
 
 
-// You can write your hook here.
-//public int get_playerSkin() { }
+// ---------------------------------------------------------------------------
+// Cam xa – camera zoom out
+// GameSettings::GetUniformCameraHeightRateValue()
+// Scripts.Base.dll | Assets.Scripts.Framework | 0 args | returns float
+// ---------------------------------------------------------------------------
+bool  CamXa    = false;
+float camZoom  = 1.5f;   // 1.0 = default, higher = more zoomed out
 
-bool SkinHack = false;
-int skinID = 49;
-
-int (*org_skin)(void* instance);
-int new_skin(void*instance) {
-    if (SkinHack) {
-       return skinID;
-    }
-    return org_skin(instance);
+static float (*_GetUniformCameraHeightRateValue)(void* instance) = nullptr;
+static float new_GetUniformCameraHeightRateValue(void* instance) {
+    if (CamXa) return camZoom;
+    if (!_GetUniformCameraHeightRateValue) return 1.0f;
+    return _GetUniformCameraHeightRateValue(instance);
 }
 
-// public bool get_Visible() { }
-// public COM_PLAYERCAMP get_objCamp() { }
-enum COM_PLAYERCAMP {
-    ComPlayercampMid = 0,
-    ComPlayercamp1   = 1,
-    ComPlayercamp2   = 2,
-};
+// ---------------------------------------------------------------------------
+// FPS unlock – Application::get_targetFrameRate()
+// UnityEngine.dll | UnityEngine | Application | 0 args | returns int
+// ---------------------------------------------------------------------------
+bool FpsUnlock = false;
 
-bool ShowVisible = false;
-
-int (*org_get_objCamp)(void* instance);
-
-static inline bool isEnemyCamp(void* instance) {
-    if (!instance || !org_get_objCamp) return false;
-    COM_PLAYERCAMP camp = (COM_PLAYERCAMP)org_get_objCamp(instance);
-    return camp == ComPlayercamp1 || camp == ComPlayercamp2;
+static int (*_get_targetFrameRate)(void* instance) = nullptr;
+static int new_get_targetFrameRate(void* instance) {
+    if (FpsUnlock) return 120;
+    if (!_get_targetFrameRate) return 60;
+    return _get_targetFrameRate(instance);
 }
 
-// Hook get_Visible: force render visible for enemies
-bool (*org_get_Visible)(void* instance);
-bool new_get_Visible(void* instance) {
-    if (ShowVisible && isEnemyCamp(instance)) return true;
-    if (!org_get_Visible) return false;
-    return org_get_Visible(instance);
+// ---------------------------------------------------------------------------
+// Auto Aim
+// GameInput::IsSmartUse()        – Scripts.GameCore.dll | Assets.Scripts.GameLogic.GameInput | 0 args
+// SkillLinkerComponent::IsUseSkillJoystick(slot) – Scripts.GameCore.dll | Assets.Scripts.GameLogic | 1 arg
+// IsSmartUse=true  → skills auto-target enemies
+// IsUseSkillJoystick=false → disable joystick direction aiming
+// ---------------------------------------------------------------------------
+bool AutoAim = false;
+
+static bool (*_IsSmartUse)(void* instance) = nullptr;
+static bool new_IsSmartUse(void* instance) {
+    if (AutoAim) return true;
+    if (!_IsSmartUse) return false;
+    return _IsSmartUse(instance);
 }
 
-// Hook ActorLinker::SetVisible(bLogicVisible, bMeshVisible)
-void (*_ActorSetVisible)(void* instance, bool bLogicVisible, bool bMeshVisible);
-void new_ActorSetVisible(void* instance, bool bLogicVisible, bool bMeshVisible) {
-    if (ShowVisible && isEnemyCamp(instance)) {
-        bLogicVisible = true;
-        bMeshVisible  = true;
-    }
-    if (_ActorSetVisible) _ActorSetVisible(instance, bLogicVisible, bMeshVisible);
+static bool (*_IsUseSkillJoystick)(void* instance, int slot) = nullptr;
+static bool new_IsUseSkillJoystick(void* instance, int slot) {
+    if (AutoAim) return false;
+    if (!_IsUseSkillJoystick) return false;
+    return _IsUseSkillJoystick(instance, slot);
 }
 
-// SGC::SetActorVisibilityImpl(ref SGW.SetActorVisibilityParam& param)
-// param struct layout: objID @ 0x20, visible_bool @ 0x28
-// Forcing visible_bool=1 keeps enemy actors logically visible so position updates continue.
-void (*_SetActorVisibilityImpl)(void* paramPtr);
-void new_SetActorVisibilityImpl(void* paramPtr) {
-    if (ShowVisible && paramPtr)
-        *(uint8_t*)((uint64_t)paramPtr + 0x28) = 1;
-    if (_SetActorVisibilityImpl) _SetActorVisibilityImpl(paramPtr);
+// ---------------------------------------------------------------------------
+// LSD – CPlayerInfoSystem::IsSelfProfile()
+// Scripts.System.dll | Assets.Scripts.GameSystem | 0 args | returns bool
+// Makes game treat every profile view as the local player's own profile.
+// ---------------------------------------------------------------------------
+bool LSD = false;
+
+static bool (*_IsSelfProfile)(void* instance) = nullptr;
+static bool new_IsSelfProfile(void* instance) {
+    if (LSD) return true;
+    if (!_IsSelfProfile) return false;
+    return _IsSelfProfile(instance);
 }
 
+// ---------------------------------------------------------------------------
+// Ten cam chon – CHeroSelectBanPickSystem::InitTeamHeroList(listScript, camp, isLeftList)
+// Scripts.System.dll | Assets.Scripts.GameSystem | 3 args
+// Hook intercepts hero list initialisation in ban/pick phase.
+// ---------------------------------------------------------------------------
+bool TenCamChon = false;
 
+static void (*_InitTeamHeroList)(void* instance, void* listScript, int camp, bool isLeftList) = nullptr;
+static void new_InitTeamHeroList(void* instance, void* listScript, int camp, bool isLeftList) {
+    if (_InitTeamHeroList) _InitTeamHeroList(instance, listScript, camp, isLeftList);
+}
 
+// ---------------------------------------------------------------------------
+// Hien hoi chieu – skill cooldown display
+// Hooks ActorLinker::LateUpdate to capture the local player's ActorLinker ptr.
+// Skill CD data is then read in DrawMenu from the SkillLinkerComponent.
+//   ActorLinker.SkillControl   @ offset 0x38  (SkillLinkerComponent*)
+//   SkillLinkerComponent.skillSlotLinkerArray @ 0x28 (C# array)
+//   SkillSlotLinker.CurSkillCD    @ 0x5C (int, ms)
+//   SkillSlotLinker.CurSkillCDMax @ 0x60 (int, ms)
+// ---------------------------------------------------------------------------
+bool  HienHoiChieu = false;
+void* g_LocalActor = nullptr;
+
+static int32_t  (*_GetHostPlayerId)(void* instance) = nullptr;
+static uint32_t (*_get_RawPlayerID)(void* instance)  = nullptr;
+static void     (*_LateUpdate)(void* instance)        = nullptr;
+
+static void new_LateUpdate(void* instance) {
+    if (_LateUpdate) _LateUpdate(instance);
+    if (!instance || !_GetHostPlayerId || !_get_RawPlayerID) return;
+    if (_get_RawPlayerID(instance) == (uint32_t)_GetHostPlayerId(nullptr))
+        g_LocalActor = instance;
+}
 
 
 void hack();
@@ -149,7 +186,7 @@ public:
 
     void preAppSpecialize(AppSpecializeArgs *args) override {
         const char *process = env_->GetStringUTFChars(args->nice_name, nullptr);
-		
+
         is_game_ = (strcmp(process, packageName) == 0);
 
         env_->ReleaseStringUTFChars(args->nice_name, process);
@@ -179,9 +216,9 @@ void SetupImgui() {
   ImGui::CreateContext();
   ImGui_ImplAndroid_Init(nullptr);
   ImGuiIO& io = ImGui::GetIO();
-  
+
   SetYetAnotherDarkTheme(); //Theme
-  
+
   ImGuiStyle *style = &ImGui::GetStyle();
   ImGui::GetStyle().WindowTitleAlign = ImVec2(0.5f, 0.5f);
   ImGui::GetStyle().FrameBorderSize = 1.5f;
@@ -422,7 +459,7 @@ void DrawLogo() {
   if (!ImGuiOK) return;
   float hue = fmodf(ImGui::GetTime() * 0.1f, 1.0f);
   ImVec4 rainbow = HSVtoRGB(hue, 1.0f, 1.0f);
-  
+
   static time_t expiry_timestamp = GetExpiryTimestamp("28-10-35"); // Add your Expiry date here. (Date/Month/year)
   time_t now = time(nullptr);
   ImVec2 window_size = ImGui::GetIO().DisplaySize;
@@ -445,7 +482,7 @@ void DrawLogo() {
   ImGuiWindowFlags_AlwaysAutoResize |
   ImGuiWindowFlags_NoTitleBar |
   ImGuiWindowFlags_NoBackground;
-  
+
   ImGui::Begin("Logo", nullptr, flags);
 
   float size = 100.0f;
@@ -503,7 +540,7 @@ void DrawMenu() {
 
     if (!g_ShowMenu) return;
 
-    const ImVec2 window_size = ImVec2(600, 600);
+    const ImVec2 window_size = ImVec2(600, 650);
     ImVec2 center = ImGui::GetIO().DisplaySize * 0.5f;
     ImVec2 pos = ImVec2(center.x - window_size.x * 0.5f, center.y - window_size.y * 0.5f);
 
@@ -558,29 +595,64 @@ void DrawMenu() {
     ImGui::Spacing();
 
     if (activeFeature == 0) {
-        ImGui::Checkbox("Set Skin", &SkinHack);
-        ImGui::SliderInt("ID", &skinID, 1, 49);
-        ImGui::Separator();
-        ImGui::Checkbox("Show Enemy (Antifog)", &ShowVisible);
+
+        // ── Cam Xa ────────────────────────────────────────────────────────
+        ImGui::Checkbox("Cam Xa", &CamXa);
+        if (CamXa) {
+            ImGui::SameLine();
+            ImGui::SliderFloat("Zoom", &camZoom, 1.0f, 3.0f);
+        }
         ImGui::Separator();
 
-        // ── Unlock Skin ────────────────────────────────────────────────
+        // ── FPS unlock ────────────────────────────────────────────────────
+        ImGui::Checkbox("FPS 120", &FpsUnlock);
+        ImGui::Separator();
+
+        // ── Auto Aim ──────────────────────────────────────────────────────
+        ImGui::Checkbox("Auto Aim", &AutoAim);
+        if (AutoAim) ImGui::TextDisabled("IsSmartUse + tat joystick skill");
+        ImGui::Separator();
+
+        // ── LSD ───────────────────────────────────────────────────────────
+        ImGui::Checkbox("LSD (IsHostProfile)", &LSD);
+        ImGui::Separator();
+
+        // ── Ten Cam Chon ──────────────────────────────────────────────────
+        ImGui::Checkbox("Ten Cam Chon", &TenCamChon);
+        ImGui::Separator();
+
+        // ── Hien Hoi Chieu ────────────────────────────────────────────────
+        ImGui::Checkbox("Hien Hoi Chieu", &HienHoiChieu);
+        if (HienHoiChieu) {
+            void* actor = g_LocalActor;
+            if (actor) {
+                void* skillCtrl = *(void**)((uint64_t)actor + 0x38);
+                if (skillCtrl) {
+                    void* slotArr = *(void**)((uint64_t)skillCtrl + 0x28);
+                    if (slotArr) {
+                        int count = *(int*)((uint64_t)slotArr + 0x18);
+                        if (count > 0 && count <= 8) {
+                            for (int i = 0; i < count; i++) {
+                                void* slot = *(void**)((uint64_t)slotArr + 0x20 + i * 8);
+                                if (!slot) continue;
+                                int cd    = *(int*)((uint64_t)slot + 0x5C);
+                                int cdMax = *(int*)((uint64_t)slot + 0x60);
+                                ImGui::Text("Skill %d CD: %d/%d ms", i + 1, cd, cdMax);
+                            }
+                        }
+                    }
+                }
+            } else {
+                ImGui::TextDisabled("Cho vao tran de hien thi...");
+            }
+        }
+        ImGui::Separator();
+
+        // ── Unlock Skin ───────────────────────────────────────────────────
         if (ImGui::Checkbox("Unlock Skin", &unlockskin)) {
             if (!unlockskin) CSProtocol::saveData::resetArrayUnpackSkin();
         }
-        if (unlockskin) {
-            ImGui::TextColored(ImColor(0, 255, 180), "Vao man chon tuong -> bam chon skin de ap dung.");
-        }
-
-        ImGui::Separator();
-
-        // ── Unlock Button ──────────────────────────────────────────────
-        if (ImGui::Checkbox("Unlock Button", &unlockbutton)) {
-            if (!unlockbutton) CSProtocol::saveData::resetArrayUnpackSkin();
-        }
-        if (unlockbutton) {
-            ImGui::TextColored(ImColor(0, 255, 180), "Mo khoa nut skin. Bam chon skin de ap dung.");
-        }
+        if (unlockskin) ImGui::TextDisabled("Bat len, chon skin trong game la tu dong ap dung");
     }
     else if (activeFeature == 1) {
         ImGui::Columns(2, "deviceInfo", false);
@@ -632,7 +704,7 @@ inline EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
 
   eglQuerySurface(dpy, surface, EGL_WIDTH, &g_GlWidth);
   eglQuerySurface(dpy, surface, EGL_HEIGHT, &g_GlHeight);
-  
+
   static bool should_clear_mouse_pos = false;
 
   if (!g_IsSetup) {
@@ -674,10 +746,10 @@ inline EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
       io.MouseDown[0] = false;
     }
   }
-  
+
   DrawLogo();
   DrawMenu();
-  
+
   ImGui::End();
   ImGui::Render();
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -691,29 +763,18 @@ inline EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
 }
 
 
-
-
-
-
-
 typedef unsigned long DWORD;
 static uintptr_t libBase;
 
 uintptr_t string2Offset(const char *c) {
   int base = 16;
-  // See if this function catches all possibilities.
-  // If it doesn't, the function would have to be amended
-  // whenever you add a combination of architecture and
-  // compiler that is not yet addressed.
   static_assert(sizeof(uintptr_t) == sizeof(unsigned long) || sizeof(uintptr_t) == sizeof(unsigned long long),
     "Please add string to handle conversion for this architecture.");
 
-  // Now choose the correct function ...
   if (sizeof(uintptr_t) == sizeof(unsigned long)) {
     return strtoul(c, nullptr, base);
   }
 
-  // All other options exhausted, sizeof(uintptr_t) == sizeof(unsigned long long))
   return strtoull(c, nullptr, base);
 }
 
@@ -865,23 +926,39 @@ void hack_injec() {
   }
   sleep(5);
   Il2CppAttach("libil2cpp.so");
-  // Write Your bypass/AutoUpdate Hooks
-  DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "", "GameParamsScript", "get_playerSkin", 0), (void*)new_skin, (void**)&org_skin);
 
-  // Antifog
-  org_get_objCamp = (int (*)(void*)) Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_objCamp", 0);
+  void* addr;
 
-  void* visAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_Visible", 0);
-  if (visAddr) DobbyHook(visAddr, (void*)new_get_Visible, (void**)&org_get_Visible);
+  // ── Cam Xa ──────────────────────────────────────────────────────────────
+  addr = Il2CppGetMethodOffset("Scripts.Base.dll", "Assets.Scripts.Framework", "GameSettings", "GetUniformCameraHeightRateValue", 0);
+  if (addr) DobbyHook(addr, (void*)new_GetUniformCameraHeightRateValue, (void**)&_GetUniformCameraHeightRateValue);
 
-  void* svAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "SetVisible", 2);
-  if (svAddr) DobbyHook(svAddr, (void*)new_ActorSetVisible, (void**)&_ActorSetVisible);
+  // ── FPS unlock ──────────────────────────────────────────────────────────
+  addr = Il2CppGetMethodOffset("UnityEngine.dll", "UnityEngine", "Application", "get_targetFrameRate", 0);
+  if (addr) DobbyHook(addr, (void*)new_get_targetFrameRate, (void**)&_get_targetFrameRate);
 
-  // SGC::SetActorVisibilityImpl – force visible_bool=1 so enemy positions stay live
-  void* sviAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "SetActorVisibilityImpl", 1);
-  if (sviAddr) DobbyHook(sviAddr, (void*)new_SetActorVisibilityImpl, (void**)&_SetActorVisibilityImpl);
+  // ── Auto Aim ────────────────────────────────────────────────────────────
+  addr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic.GameInput", "GameInput", "IsSmartUse", 0);
+  if (addr) DobbyHook(addr, (void*)new_IsSmartUse, (void**)&_IsSmartUse);
 
-  // Unlock Skin hooks
+  addr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "SkillLinkerComponent", "IsUseSkillJoystick", 1);
+  if (addr) DobbyHook(addr, (void*)new_IsUseSkillJoystick, (void**)&_IsUseSkillJoystick);
+
+  // ── LSD ─────────────────────────────────────────────────────────────────
+  addr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CPlayerInfoSystem", "IsSelfProfile", 0);
+  if (addr) DobbyHook(addr, (void*)new_IsSelfProfile, (void**)&_IsSelfProfile);
+
+  // ── Ten Cam Chon ────────────────────────────────────────────────────────
+  addr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CHeroSelectBanPickSystem", "InitTeamHeroList", 3);
+  if (addr) DobbyHook(addr, (void*)new_InitTeamHeroList, (void**)&_InitTeamHeroList);
+
+  // ── Hien Hoi Chieu – capture local player ActorLinker via LateUpdate ───
+  _GetHostPlayerId = (int32_t  (*)(void*)) Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "LuaCallCs_Battle", "GetHostPlayerId", 0);
+  _get_RawPlayerID = (uint32_t (*)(void*)) Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_RawPlayerID", 0);
+  addr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "LateUpdate", 0);
+  if (addr) DobbyHook(addr, (void*)new_LateUpdate, (void**)&_LateUpdate);
+
+  // ── Unlock Skin ─────────────────────────────────────────────────────────
   void* skAddr;
   skAddr = Il2CppGetMethodOffset("Scripts.Plugins.dll", "CSProtocol", "COMDT_HERO_COMMON_INFO", "unpack", 2);
   if (skAddr) DobbyHook(skAddr, (void*)new_unpack, (void**)&_unpack);
@@ -898,14 +975,6 @@ void hack_injec() {
   skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "WearHeroSkin", 2);
   if (skAddr) DobbyHook(skAddr, (void*)new_WearHeroSkin, (void**)&_WearHeroSkin);
 
-  // Unlock Button: make skin buttons clickable for skins the player doesn't own
-  skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "CheckHeroSkinAvailable", 2);
-  if (skAddr) DobbyHook(skAddr, (void*)new_CheckHeroSkinAvailable, (void**)&_CheckHeroSkinAvailable);
-
-  skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CNormalSelectHeroFormLogic", "CheckHeroSkinAvailable", 2);
-  if (skAddr) DobbyHook(skAddr, (void*)new_CheckHeroSkinAvailable_N, (void**)&_CheckHeroSkinAvailable_N);
-
-  // DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "Namespace", "class", "method", 0), (void*)new_hook, (void**)&org_func);
   ImGuiOK = true;
 }
 

@@ -10,6 +10,11 @@
 bool unlockskin   = false;
 bool unlockbutton = false;
 
+int heroid  = 0;
+int skinid  = 0;
+int heroid2 = 0;
+int skinid2 = 0;
+
 namespace CSProtocol {
 
     class COMDT_HERO_COMMON_INFO {
@@ -83,7 +88,7 @@ static int32_t (*_unpack)(void* instance, void* srcBuf, uint32_t cutVer);
 static int32_t new_unpack(void* instance, void* srcBuf, uint32_t cutVer) {
     if (!_unpack) return 0;
     int32_t result = _unpack(instance, srcBuf, cutVer);
-    if (unlockskin || unlockbutton)
+    if (unlockskin)
         hook_unpack((CSProtocol::COMDT_HERO_COMMON_INFO*)instance);
     return result;
 }
@@ -93,7 +98,7 @@ static int32_t new_unpack(void* instance, void* srcBuf, uint32_t cutVer) {
 // ---------------------------------------------------------------------------
 static bool (*_IsCanUseSkin)(void* instance, uint32_t heroId, uint32_t skinId, bool includeHeroConditions);
 static bool new_IsCanUseSkin(void* instance, uint32_t heroId, uint32_t skinId, bool includeHeroConditions) {
-    if (unlockskin || unlockbutton) {
+    if (unlockskin) {
         if (heroId != 0)
             CSProtocol::saveData::setData(heroId, (uint16_t)skinId);
         return true;
@@ -110,7 +115,7 @@ static bool (*_IsHaveHeroSkin)(void* instance, uint32_t heroId, uint32_t skinId,
                                 bool isIncludeLimitSkin, bool bCheckHaveCanAcceptForeverGift);
 static bool new_IsHaveHeroSkin(void* instance, uint32_t heroId, uint32_t skinId,
                                 bool isIncludeLimitSkin, bool bCheckHaveCanAcceptForeverGift) {
-    if (unlockskin || unlockbutton) return true;
+    if (unlockskin) return true;
     if (!_IsHaveHeroSkin) return false;
     return _IsHaveHeroSkin(instance, heroId, skinId, isIncludeLimitSkin, bCheckHaveCanAcceptForeverGift);
 }
@@ -120,7 +125,7 @@ static bool new_IsHaveHeroSkin(void* instance, uint32_t heroId, uint32_t skinId,
 // ---------------------------------------------------------------------------
 static uint32_t (*_GetHeroWearSkinId)(void* instance, uint32_t heroID);
 static uint32_t new_GetHeroWearSkinId(void* instance, uint32_t heroID) {
-    if (unlockskin || unlockbutton) {
+    if (unlockskin) {
         CSProtocol::saveData::setEnable(true);
         return CSProtocol::saveData::skinId;
     }
@@ -133,27 +138,9 @@ static uint32_t new_GetHeroWearSkinId(void* instance, uint32_t heroID) {
 // ---------------------------------------------------------------------------
 static void (*_WearHeroSkin)(void* instance, uint32_t heroID, uint32_t skinID);
 static void new_WearHeroSkin(void* instance, uint32_t heroID, uint32_t skinID) {
-    if ((unlockskin || unlockbutton) && instance != nullptr && skinID != 0) {
+    if (unlockskin && instance != nullptr && skinID != 0) {
         CSProtocol::saveData::setData(heroID, (uint16_t)skinID);
         CSProtocol::saveData::setEnable(true);
     }
     if (_WearHeroSkin) _WearHeroSkin(instance, heroID, skinID);
-}
-
-// ---------------------------------------------------------------------------
-// CSelectHeroFormLogic::CheckHeroSkinAvailable(heroID, skinID) – unlock button
-// Hooks both base class and CNormalSelectHeroFormLogic override
-// ---------------------------------------------------------------------------
-static bool (*_CheckHeroSkinAvailable)(void* inst, uint32_t heroID, uint32_t skinID);
-static bool new_CheckHeroSkinAvailable(void* inst, uint32_t heroID, uint32_t skinID) {
-    if (unlockbutton) return true;
-    if (!_CheckHeroSkinAvailable) return false;
-    return _CheckHeroSkinAvailable(inst, heroID, skinID);
-}
-
-static bool (*_CheckHeroSkinAvailable_N)(void* inst, uint32_t heroID, uint32_t skinID);
-static bool new_CheckHeroSkinAvailable_N(void* inst, uint32_t heroID, uint32_t skinID) {
-    if (unlockbutton) return true;
-    if (!_CheckHeroSkinAvailable_N) return false;
-    return _CheckHeroSkinAvailable_N(inst, heroID, skinID);
 }
