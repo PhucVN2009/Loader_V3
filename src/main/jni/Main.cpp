@@ -47,6 +47,7 @@
 #include "imgui/Font.h"
 #include "imgui/Roboto-Regular.h"
 #include "QQInj.h"
+#include "modskin.h"
 #include "imgui/Icon.h"
 #include "imgui/Iconcpp.h"
 #include "AutoUpdate/IL2CppSDKGenerator/Il2Cpp.h"
@@ -538,6 +539,18 @@ void DrawMenu() {
         ImGui::SliderInt("ID", &skinID, 1, 49);
         ImGui::Separator();
         ImGui::Checkbox("Show Enemy (Antifog)", &ShowVisible);
+        ImGui::Separator();
+        if (ImGui::Checkbox("Unlock Skin", &unlockskin)) {
+            if (!unlockskin) CSProtocol::saveData::resetArrayUnpackSkin();
+        }
+        if (unlockskin) {
+            ImGui::InputInt("Hero ID", &heroid);
+            ImGui::InputInt("Skin ID", &skinid);
+            if (ImGui::Button("Apply Skin")) {
+                CSProtocol::saveData::setData((uint32_t)heroid, (uint16_t)skinid);
+                CSProtocol::saveData::setEnable(true);
+            }
+        }
     }
     else if (activeFeature == 1) {
         ImGui::Columns(2, "deviceInfo", false);
@@ -828,6 +841,9 @@ void hack_injec() {
   // Antifog: hook get_Visible on ActorLinker, force visible for enemy camps
   org_get_objCamp = (int (*)(void*)) Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_objCamp", 0);
   DobbyHook(Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_Visible", 0), (void*)new_get_Visible, (void**)&org_get_Visible);
+
+  // Unlock Skin hooks
+  RegisterSkinHooks(il2cpp_base);
 
   // DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "Namespace", "class", "method", 0), (void*)new_hook, (void**)&org_func);
   ImGuiOK = true;
