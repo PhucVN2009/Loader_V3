@@ -99,16 +99,30 @@ bool ShowVisible = false;
 
 int (*org_get_objCamp)(void* instance);
 
+static inline bool isEnemyCamp(void* instance) {
+    if (!instance || !org_get_objCamp) return false;
+    COM_PLAYERCAMP camp = (COM_PLAYERCAMP)org_get_objCamp(instance);
+    return camp == ComPlayercamp1 || camp == ComPlayercamp2;
+}
+
+// Hook get_Visible: force render visible for enemies
 bool (*org_get_Visible)(void* instance);
 bool new_get_Visible(void* instance) {
-    if (instance != nullptr && ShowVisible && org_get_objCamp) {
-        COM_PLAYERCAMP camp = (COM_PLAYERCAMP) org_get_objCamp(instance);
-        if (camp == ComPlayercamp1 || camp == ComPlayercamp2) {
-            return true;
-        }
-    }
+    if (ShowVisible && isEnemyCamp(instance)) return true;
     if (!org_get_Visible) return false;
     return org_get_Visible(instance);
+}
+
+// Hook SetVisible(bLogicVisible, bMeshVisible):
+// Prevents game from freezing enemy position when they leave sight.
+// bLogicVisible=false stops position updates — we force it true for enemies.
+void (*_ActorSetVisible)(void* instance, bool bLogicVisible, bool bMeshVisible);
+void new_ActorSetVisible(void* instance, bool bLogicVisible, bool bMeshVisible) {
+    if (ShowVisible && isEnemyCamp(instance)) {
+        bLogicVisible = true;
+        bMeshVisible  = true;
+    }
+    if (_ActorSetVisible) _ActorSetVisible(instance, bLogicVisible, bMeshVisible);
 }
 
 
@@ -544,14 +558,7 @@ void DrawMenu() {
         if (ImGui::Checkbox("Unlock Skin", &unlockskin)) {
             if (!unlockskin) CSProtocol::saveData::resetArrayUnpackSkin();
         }
-        if (unlockskin) {
-            ImGui::InputInt("Hero ID", &heroid);
-            ImGui::InputInt("Skin ID", &skinid);
-            if (ImGui::Button("Apply Skin")) {
-                CSProtocol::saveData::setData((uint32_t)heroid, (uint16_t)skinid);
-                CSProtocol::saveData::setEnable(true);
-            }
-        }
+        if (unlockskin) ImGui::TextDisabled("Bat len, chon skin trong game la tu dong ap dung");
     }
     else if (activeFeature == 1) {
         ImGui::Columns(2, "deviceInfo", false);
@@ -839,10 +846,15 @@ void hack_injec() {
   // Write Your bypass/AutoUpdate Hooks
   DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "", "GameParamsScript", "get_playerSkin", 0), (void*)new_skin, (void**)&org_skin);
 
-  // Antifog: hook get_Visible on ActorLinker, force visible for enemy camps
+  // Antifog
   org_get_objCamp = (int (*)(void*)) Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_objCamp", 0);
+
   void* visAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_Visible", 0);
   if (visAddr) DobbyHook(visAddr, (void*)new_get_Visible, (void**)&org_get_Visible);
+
+  // Fix enemy frozen position: intercept SetVisible so bLogicVisible stays true
+  void* svAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "SetVisible", 2);
+  if (svAddr) DobbyHook(svAddr, (void*)new_ActorSetVisible, (void**)&_ActorSetVisible);
 
   // Unlock Skin hooks
   void* skAddr;
