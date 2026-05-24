@@ -73,107 +73,6 @@ using zygisk::ServerSpecializeArgs;
 char packageName[] = "com.levelinfinite.sgameGlobal.midaspay";
 
 
-// ---------------------------------------------------------------------------
-// Cam xa – camera zoom out
-// GameSettings::GetUniformCameraHeightRateValue()
-// Scripts.Base.dll | Assets.Scripts.Framework | 0 args | returns float
-// ---------------------------------------------------------------------------
-bool  CamXa    = false;
-float camZoom  = 1.5f;   // 1.0 = default, higher = more zoomed out
-
-static float (*_GetUniformCameraHeightRateValue)(void* instance) = nullptr;
-static float new_GetUniformCameraHeightRateValue(void* instance) {
-    if (CamXa) return camZoom;
-    if (!_GetUniformCameraHeightRateValue) return 1.0f;
-    return _GetUniformCameraHeightRateValue(instance);
-}
-
-// ---------------------------------------------------------------------------
-// FPS unlock – Application::get_targetFrameRate()
-// UnityEngine.dll | UnityEngine | Application | 0 args | returns int
-// ---------------------------------------------------------------------------
-bool FpsUnlock = false;
-
-static int (*_get_targetFrameRate)(void* instance) = nullptr;
-static int new_get_targetFrameRate(void* instance) {
-    if (FpsUnlock) return 120;
-    if (!_get_targetFrameRate) return 60;
-    return _get_targetFrameRate(instance);
-}
-
-// ---------------------------------------------------------------------------
-// Auto Aim
-// GameInput::IsSmartUse()        – Scripts.GameCore.dll | Assets.Scripts.GameLogic.GameInput | 0 args
-// SkillLinkerComponent::IsUseSkillJoystick(slot) – Scripts.GameCore.dll | Assets.Scripts.GameLogic | 1 arg
-// IsSmartUse=true  → skills auto-target enemies
-// IsUseSkillJoystick=false → disable joystick direction aiming
-// ---------------------------------------------------------------------------
-bool AutoAim = false;
-
-static bool (*_IsSmartUse)(void* instance) = nullptr;
-static bool new_IsSmartUse(void* instance) {
-    if (AutoAim) return true;
-    if (!_IsSmartUse) return false;
-    return _IsSmartUse(instance);
-}
-
-static bool (*_IsUseSkillJoystick)(void* instance, int slot) = nullptr;
-static bool new_IsUseSkillJoystick(void* instance, int slot) {
-    if (AutoAim) return false;
-    if (!_IsUseSkillJoystick) return false;
-    return _IsUseSkillJoystick(instance, slot);
-}
-
-// ---------------------------------------------------------------------------
-// LSD – CPlayerInfoSystem::IsSelfProfile()
-// Scripts.System.dll | Assets.Scripts.GameSystem | 0 args | returns bool
-// Makes game treat every profile view as the local player's own profile.
-// ---------------------------------------------------------------------------
-bool LSD = false;
-
-static bool (*_IsSelfProfile)(void* instance) = nullptr;
-static bool new_IsSelfProfile(void* instance) {
-    if (LSD) return true;
-    if (!_IsSelfProfile) return false;
-    return _IsSelfProfile(instance);
-}
-
-// ---------------------------------------------------------------------------
-// Ten cam chon – CHeroSelectBanPickSystem::InitTeamHeroList(listScript, camp, isLeftList)
-// Scripts.System.dll | Assets.Scripts.GameSystem | 3 args
-// Hook intercepts hero list initialisation in ban/pick phase.
-// ---------------------------------------------------------------------------
-bool TenCamChon = false;
-
-static void (*_InitTeamHeroList)(void* instance, void* listScript, int camp, bool isLeftList) = nullptr;
-static void new_InitTeamHeroList(void* instance, void* listScript, int camp, bool isLeftList) {
-    if (_InitTeamHeroList) _InitTeamHeroList(instance, listScript, camp, isLeftList);
-}
-
-// ---------------------------------------------------------------------------
-// Hien hoi chieu – skill cooldown display
-// Hooks ActorLinker::LateUpdate to capture the local player's ActorLinker ptr.
-// Skill CD data is then read in DrawMenu from the SkillLinkerComponent.
-//   ActorLinker.SkillControl   @ offset 0x38  (SkillLinkerComponent*)
-//   SkillLinkerComponent.skillSlotLinkerArray @ 0x28 (C# array)
-//   SkillSlotLinker.CurSkillCD    @ 0x5C (int, ms)
-//   SkillSlotLinker.CurSkillCDMax @ 0x60 (int, ms)
-// ---------------------------------------------------------------------------
-bool  HienHoiChieu = false;
-void* g_LocalActor = nullptr;
-
-static int32_t  (*_GetHostPlayerId)(void* instance) = nullptr;
-static uint32_t (*_get_RawPlayerID)(void* instance)  = nullptr;
-static void     (*_LateUpdate)(void* instance)        = nullptr;
-
-static void new_LateUpdate(void* instance) {
-    if (_LateUpdate) _LateUpdate(instance);
-    if (!instance || !_GetHostPlayerId || !_get_RawPlayerID) return;
-    if (_get_RawPlayerID(instance) == (uint32_t)_GetHostPlayerId(nullptr))
-        g_LocalActor = instance;
-}
-
-
 void hack();
 void writeLog(const std::string& logMessage, const std::string& filename = "/storage/emulated/0/Android/data/com.waxmoon.ma.gp/files/log.txt");
 
@@ -340,20 +239,17 @@ void BackGroundDots(int numberOfDots) {
   ImDrawList* draw_list = ImGui::GetWindowDrawList();
   ImVec2 windowSize = ImGui::GetIO().DisplaySize;
 
-  // Время для движения и цвета
   static auto lastTime = std::chrono::high_resolution_clock::now();
   auto currentTime = std::chrono::high_resolution_clock::now();
   std::chrono::duration < float > deltaTime = currentTime - lastTime;
   lastTime = currentTime;
   float t = std::chrono::duration < float > (currentTime.time_since_epoch()).count();
 
-  // Удаляем точки вне экрана
   points.erase(std::remove_if(points.begin(), points.end(), [&](const Point& p) {
     return (p.position.x < 0 - p.radius || p.position.x > windowSize.x + p.radius ||
       p.position.y < 0 - p.radius || p.position.y > windowSize.y + p.radius);
   }), points.end());
 
-  // Добавляем новые точки
   while (points.size() < numberOfDots) {
     Point newPoint;
     newPoint.position.x = randomFloat(0, windowSize.x);
@@ -364,13 +260,10 @@ void BackGroundDots(int numberOfDots) {
     points.push_back(newPoint);
   }
 
-  // Обновление и отрисовка точек
   for (int i = 0; i < points.size(); ++i) {
-    // Движение точки
     points[i].position.x += points[i].velocity.x * deltaTime.count();
     points[i].position.y += points[i].velocity.y * deltaTime.count();
 
-    // Отскок от границ
     if (points[i].position.x < 0) {
       points[i].position.x = 0; points[i].velocity.x *= -1;
     }
@@ -384,13 +277,11 @@ void BackGroundDots(int numberOfDots) {
       points[i].position.y = windowSize.y; points[i].velocity.y *= -1;
     }
 
-    // Динамический цвет точки (циклический)
     float r = 0.3f + 0.7f * (0.5f + 0.5f * sinf(t + i));
     float g = 0.3f + 0.7f * (0.5f + 0.5f * sinf(t + i + 2.0f));
     float b = 0.3f + 0.7f * (0.5f + 0.5f * sinf(t + i + 4.0f));
     ImVec4 dotColor = ImVec4(r, g, b, 0.8f);
 
-    // Соединение с другими точками
     float maxDist = 60.0f;
     for (int j = i + 1; j < points.size(); ++j) {
       float dx = points[i].position.x - points[j].position.x;
@@ -403,16 +294,13 @@ void BackGroundDots(int numberOfDots) {
       }
     }
 
-    // Отрисовка самой точки
     draw_list->AddCircleFilled(points[i].position, points[i].radius, ImGui::ColorConvertFloat4ToU32(dotColor));
   }
 }
 
 
 ImVec4 HSVtoRGB(float h, float s, float v) {
-  float r,
-  g,
-  b;
+  float r, g, b;
 
   int i = int(h * 6.0f);
   float f = h * 6.0f - i;
@@ -436,19 +324,18 @@ ImVec4 HSVtoRGB(float h, float s, float v) {
 #include <cstdio>
 
 time_t GetExpiryTimestamp(const char* expiry_date_str) {
-    // expiry_date_str format is "DD-MM-YY"
     struct tm expiry_tm = {0};
     int day, month, year;
     if (sscanf(expiry_date_str, "%d-%d-%d", &day, &month, &year) != 3) {
-        return 0; // invalid format fallback, never expires
+        return 0;
     }
     expiry_tm.tm_mday = day;
-    expiry_tm.tm_mon = month - 1; // tm_mon is 0-11
-    expiry_tm.tm_year = (year < 100) ? (year + 100) : year; // 2000-based year (e.g., 25 -> 2025)
+    expiry_tm.tm_mon = month - 1;
+    expiry_tm.tm_year = (year < 100) ? (year + 100) : year;
     expiry_tm.tm_hour = 0;
     expiry_tm.tm_min = 0;
     expiry_tm.tm_sec = 0;
-    expiry_tm.tm_isdst = -1; // let system determine
+    expiry_tm.tm_isdst = -1;
     return mktime(&expiry_tm);
 }
 
@@ -460,11 +347,10 @@ void DrawLogo() {
   float hue = fmodf(ImGui::GetTime() * 0.1f, 1.0f);
   ImVec4 rainbow = HSVtoRGB(hue, 1.0f, 1.0f);
 
-  static time_t expiry_timestamp = GetExpiryTimestamp("28-10-35"); // Add your Expiry date here. (Date/Month/year)
+  static time_t expiry_timestamp = GetExpiryTimestamp("28-10-35");
   time_t now = time(nullptr);
   ImVec2 window_size = ImGui::GetIO().DisplaySize;
 
-  // If expired, show expiry message centered and skip rest of menu
   if (now > expiry_timestamp && expiry_timestamp != 0) {
     ImGui::SetNextWindowBgAlpha(0.75f);
     ImGui::SetNextWindowPos(ImVec2(window_size.x / 2, window_size.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -473,7 +359,7 @@ void DrawLogo() {
     ImGui::Text("- Note : ModMenu is expired -");
     ImGui::End();
 	ImGui::PopStyleColor(1);
-    return; // Prevent drawing the rest of the menu when expired
+    return;
   }
 
   ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
@@ -489,22 +375,19 @@ void DrawLogo() {
   ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, size * 0.5f);
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 10));
 
-  // === Glass effect background (fake blur with alpha rect) ===
   ImVec2 pos = ImGui::GetCursorScreenPos();
   ImVec2 rect = ImVec2(pos.x + size, pos.y + size);
   ImDrawList* draw_list = ImGui::GetWindowDrawList();
-  draw_list->AddRectFilled(pos, rect, IM_COL32(255, 255, 255, 60), size * 0.5f); // frosted background
+  draw_list->AddRectFilled(pos, rect, IM_COL32(255, 255, 255, 60), size * 0.5f);
 
-  // === Transparent button colors ===
   ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 1.0f, 1.0f, 0.25f));
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.35f));
   ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.45f));
 
-  // === Animated text color (rainbow effect) ===
-  hue += ImGui::GetIO().DeltaTime * 0.3f; // Speed of color change
+  hue += ImGui::GetIO().DeltaTime * 0.3f;
   if (hue > 1.0f) hue -= 1.0f;
 
-  ImVec4 textColor = ImColor::HSV(hue, 0.8f, 1.0f); // HSV to RGB conversion
+  ImVec4 textColor = ImColor::HSV(hue, 0.8f, 1.0f);
   ImGui::PushStyleColor(ImGuiCol_Text, textColor);
 
   ImGui::Button(ICON_FA_POWER_OFF, ImVec2(size, size));
@@ -540,7 +423,7 @@ void DrawMenu() {
 
     if (!g_ShowMenu) return;
 
-    const ImVec2 window_size = ImVec2(600, 650);
+    const ImVec2 window_size = ImVec2(600, 600);
     ImVec2 center = ImGui::GetIO().DisplaySize * 0.5f;
     ImVec2 pos = ImVec2(center.x - window_size.x * 0.5f, center.y - window_size.y * 0.5f);
 
@@ -596,63 +479,63 @@ void DrawMenu() {
 
     if (activeFeature == 0) {
 
-        // ── Cam Xa ────────────────────────────────────────────────────────
-        ImGui::Checkbox("Cam Xa", &CamXa);
-        if (CamXa) {
-            ImGui::SameLine();
-            ImGui::SliderFloat("Zoom", &camZoom, 1.0f, 3.0f);
-        }
-        ImGui::Separator();
-
-        // ── FPS unlock ────────────────────────────────────────────────────
-        ImGui::Checkbox("FPS 120", &FpsUnlock);
-        ImGui::Separator();
-
-        // ── Auto Aim ──────────────────────────────────────────────────────
-        ImGui::Checkbox("Auto Aim", &AutoAim);
-        if (AutoAim) ImGui::TextDisabled("IsSmartUse + tat joystick skill");
-        ImGui::Separator();
-
-        // ── LSD ───────────────────────────────────────────────────────────
-        ImGui::Checkbox("LSD (IsHostProfile)", &LSD);
-        ImGui::Separator();
-
-        // ── Ten Cam Chon ──────────────────────────────────────────────────
-        ImGui::Checkbox("Ten Cam Chon", &TenCamChon);
-        ImGui::Separator();
-
-        // ── Hien Hoi Chieu ────────────────────────────────────────────────
-        ImGui::Checkbox("Hien Hoi Chieu", &HienHoiChieu);
-        if (HienHoiChieu) {
-            void* actor = g_LocalActor;
-            if (actor) {
-                void* skillCtrl = *(void**)((uint64_t)actor + 0x38);
-                if (skillCtrl) {
-                    void* slotArr = *(void**)((uint64_t)skillCtrl + 0x28);
-                    if (slotArr) {
-                        int count = *(int*)((uint64_t)slotArr + 0x18);
-                        if (count > 0 && count <= 8) {
-                            for (int i = 0; i < count; i++) {
-                                void* slot = *(void**)((uint64_t)slotArr + 0x20 + i * 8);
-                                if (!slot) continue;
-                                int cd    = *(int*)((uint64_t)slot + 0x5C);
-                                int cdMax = *(int*)((uint64_t)slot + 0x60);
-                                ImGui::Text("Skill %d CD: %d/%d ms", i + 1, cd, cdMax);
-                            }
-                        }
-                    }
-                }
-            } else {
-                ImGui::TextDisabled("Cho vao tran de hien thi...");
-            }
-        }
-        ImGui::Separator();
-
         // ── Unlock Skin ───────────────────────────────────────────────────
         if (ImGui::Checkbox("Unlock Skin", &unlockskin)) {
             if (!unlockskin) CSProtocol::saveData::resetArrayUnpackSkin();
         }
-        if (unlockskin) ImGui::TextDisabled("Bat len, chon skin trong game la tu dong ap dung");
+
+        if (unlockskin) {
+            ImGui::Spacing();
+            ImGui::InputInt("Hero ID", &heroid);
+            ImGui::InputInt("Skin ID", &skinid);
+            ImGui::Spacing();
+
+            if (ImGui::Button("Apply Skin", ImVec2(-1, 55))) {
+                CSProtocol::saveData::setData((uint32_t)heroid, (uint16_t)skinid);
+                CSProtocol::saveData::setEnable(true);
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ── Guide (scrollable child window) ──────────────────────────
+            ImGui::TextColored(ImColor(255, 220, 0), ICON_FA_INFO_CIRCLE " How to use:");
+            ImGui::BeginChild("guide_scroll", ImVec2(-1, 200), true,
+                              ImGuiWindowFlags_HorizontalScrollbar);
+
+            ImGui::TextColored(ImColor(100, 220, 255),
+                "=== HOW TO USE UNLOCK SKIN ===");
+            ImGui::TextWrapped(
+                "1. Turn ON 'Unlock Skin' toggle.\n"
+                "2. Enter Hero ID and Skin ID (see examples below).\n"
+                "3. Click 'Apply Skin' to save the combination.\n"
+                "4. Enter a match, the skin will be unlocked.\n\n"
+                "Example: Allain has 6 skins (including default).\n"
+                "Default skin ID = 0, Levi skin is at position 6 but ID = 5.\n"
+                "Set Hero ID = Allain's ID, Skin ID = 5\n"
+                "-> In-game you will see Allain Levi skin.\n"
+                "Same logic works for any other hero.");
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::TextColored(ImColor(100, 255, 160),
+                "=== HUONG DAN UNLOCK SKIN ===");
+            ImGui::TextWrapped(
+                "1. Bat 'Unlock Skin'.\n"
+                "2. Nhap Hero ID va Skin ID (xem vi du ben duoi).\n"
+                "3. Bam 'Apply Skin' de luu bo so.\n"
+                "4. Vao tran, skin se duoc mo khoa.\n\n"
+                "Vi du: Tuong Allain co 6 skin (tinh ca mac dinh).\n"
+                "Skin mac dinh ID = 0, skin Levi o vi tri thu 6 nhung ID = 5.\n"
+                "Nhap Hero ID = ID cua Allain, Skin ID = 5\n"
+                "-> Trong tran se thay Allain mac skin Levi.\n"
+                "Cac tuong khac cung tuong tu.");
+
+            ImGui::EndChild();
+        }
     }
     else if (activeFeature == 1) {
         ImGui::Columns(2, "deviceInfo", false);
@@ -927,38 +810,7 @@ void hack_injec() {
   sleep(5);
   Il2CppAttach("libil2cpp.so");
 
-  void* addr;
-
-  // ── Cam Xa ──────────────────────────────────────────────────────────────
-  addr = Il2CppGetMethodOffset("Scripts.Base.dll", "Assets.Scripts.Framework", "GameSettings", "GetUniformCameraHeightRateValue", 0);
-  if (addr) DobbyHook(addr, (void*)new_GetUniformCameraHeightRateValue, (void**)&_GetUniformCameraHeightRateValue);
-
-  // ── FPS unlock ──────────────────────────────────────────────────────────
-  addr = Il2CppGetMethodOffset("UnityEngine.dll", "UnityEngine", "Application", "get_targetFrameRate", 0);
-  if (addr) DobbyHook(addr, (void*)new_get_targetFrameRate, (void**)&_get_targetFrameRate);
-
-  // ── Auto Aim ────────────────────────────────────────────────────────────
-  addr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic.GameInput", "GameInput", "IsSmartUse", 0);
-  if (addr) DobbyHook(addr, (void*)new_IsSmartUse, (void**)&_IsSmartUse);
-
-  addr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "SkillLinkerComponent", "IsUseSkillJoystick", 1);
-  if (addr) DobbyHook(addr, (void*)new_IsUseSkillJoystick, (void**)&_IsUseSkillJoystick);
-
-  // ── LSD ─────────────────────────────────────────────────────────────────
-  addr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CPlayerInfoSystem", "IsSelfProfile", 0);
-  if (addr) DobbyHook(addr, (void*)new_IsSelfProfile, (void**)&_IsSelfProfile);
-
-  // ── Ten Cam Chon ────────────────────────────────────────────────────────
-  addr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CHeroSelectBanPickSystem", "InitTeamHeroList", 3);
-  if (addr) DobbyHook(addr, (void*)new_InitTeamHeroList, (void**)&_InitTeamHeroList);
-
-  // ── Hien Hoi Chieu – capture local player ActorLinker via LateUpdate ───
-  _GetHostPlayerId = (int32_t  (*)(void*)) Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "LuaCallCs_Battle", "GetHostPlayerId", 0);
-  _get_RawPlayerID = (uint32_t (*)(void*)) Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_RawPlayerID", 0);
-  addr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "LateUpdate", 0);
-  if (addr) DobbyHook(addr, (void*)new_LateUpdate, (void**)&_LateUpdate);
-
-  // ── Unlock Skin ─────────────────────────────────────────────────────────
+  // ── Unlock Skin hooks ────────────────────────────────────────────────────
   void* skAddr;
   skAddr = Il2CppGetMethodOffset("Scripts.Plugins.dll", "CSProtocol", "COMDT_HERO_COMMON_INFO", "unpack", 2);
   if (skAddr) DobbyHook(skAddr, (void*)new_unpack, (void**)&_unpack);

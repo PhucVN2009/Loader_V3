@@ -144,3 +144,4 @@ static void new_WearHeroSkin(void* instance, uint32_t heroID, uint32_t skinID) {
     }
     if (_WearHeroSkin) _WearHeroSkin(instance, heroID, skinID);
 }
+
