@@ -63,10 +63,12 @@ static bool    g_HasTarget = false;
 static int32_t g_AimDeg   = 0;
 static void*   g_MyActor  = nullptr;
 
-// Read ActorLinker world position (field at offset 0x50C)
+// ActorLinker.position field offset – resolved at runtime by Il2CppGetFieldOffset
+static size_t g_posOffset = 0x50C; // default fallback
+
 static HoK_Vec3 ReadPos(void* actor) {
     if (!actor) return {0, 0, 0};
-    float* f = (float*)((uintptr_t)actor + 0x50C);
+    float* f = (float*)((uintptr_t)actor + g_posOffset);
     return {f[0], f[1], f[2]};
 }
 
@@ -966,7 +968,6 @@ void hack_injec() {
   }
   sleep(5);
   Il2CppAttach("libil2cpp.so");
-  il2cpp_base = il2cppMap.startAddress;
 
   // ── Unlock Skin hooks ────────────────────────────────────────────────────
   void* skAddr;
@@ -985,24 +986,37 @@ void hack_injec() {
   skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "WearHeroSkin", 2);
   if (skAddr) DobbyHook(skAddr, (void*)new_WearHeroSkin, (void**)&_WearHeroSkin);
 
-  // ── Aim Skill + Auto Flo ─────────────────────────────────────────────────
-  fn_isHostPlayer = (bool(*)(void*))getRealAddr(0x65BF370); // ActorHelperProxy::IsHostPlayerView
-  fn_objCamp      = (int(*)(void*))getRealAddr(0x6216C2C);  // ActorLinker::get_objCamp
+  // ── Aim Skill + Auto Flo (auto-update: name-based lookups) ───────────────
+  // Resolve ActorLinker.position field offset dynamically
+  {
+    size_t off = Il2CppGetFieldOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "position");
+    if (off) g_posOffset = off;
+  }
+
+  // IsHostPlayerView – static helper, called directly (not hooked)
+  fn_isHostPlayer = (bool(*)(void*))Il2CppGetMethodOffset(
+      "Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorHelperProxy", "IsHostPlayerView", 1);
 
   void* fAddr;
-  fAddr = getRealAddr(0x6216C2C);  // get_objCamp (same fn, hook for passive tracking)
+  // get_objCamp – hook passively to build actor/camp cache
+  fAddr = Il2CppGetMethodOffset(
+      "Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_objCamp", 0);
   if (fAddr) DobbyHook(fAddr, (void*)new_get_objCamp, (void**)&_get_objCamp);
-  // NOTE: fn_objCamp and _get_objCamp now share the same trampoline after hook;
-  // use _get_objCamp for actual camp reads inside UpdateLogic to avoid re-entry
-  fn_objCamp = _get_objCamp;
+  fn_objCamp = _get_objCamp; // use trampoline so UpdateLogic reads camp without re-entering hook
 
-  fAddr = getRealAddr(0x5D2EB7C);  // CSkillButtonManager::UpdateLogic
+  // UpdateLogic – drives the target-finding loop each game tick
+  fAddr = Il2CppGetMethodOffset(
+      "Scripts.GameCore.dll", "Assets.Scripts.GameSystem", "CSkillButtonManager", "UpdateLogic", 1);
   if (fAddr) DobbyHook(fAddr, (void*)new_UpdateLogic, (void**)&_UpdateLogic);
 
-  fAddr = getRealAddr(0x5D16F44);  // CSkillButtonManager::GetCurSkillDirDegree
+  // GetCurSkillDirDegree – override to return aimed direction
+  fAddr = Il2CppGetMethodOffset(
+      "Scripts.GameCore.dll", "Assets.Scripts.GameSystem", "CSkillButtonManager", "GetCurSkillDirDegree", 0);
   if (fAddr) DobbyHook(fAddr, (void*)new_GetCurSkillDirDegree, (void**)&_GetCurSkillDirDegree);
 
-  fAddr = getRealAddr(0x59E2324);  // PlayerConnection.PTI.FST::SendMoveDirectionCmd (static)
+  // SendMoveDirectionCmd – redirect auto-movement toward nearest enemy
+  fAddr = Il2CppGetMethodOffset(
+      "Scripts.GameCore.dll", "PlayerConnection.PTI", "FST", "SendMoveDirectionCmd", 2);
   if (fAddr) DobbyHook(fAddr, (void*)new_SendMoveCmd, (void**)&_SendMoveCmd);
 
   ImGuiOK = true;
