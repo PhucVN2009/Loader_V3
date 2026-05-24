@@ -49,6 +49,127 @@
 #include "QQInj.h"
 #include "modskin.h"
 #include "imgui/Icon.h"
+
+// ─── Aim Skill & Auto Flo ────────────────────────────────────────────────────
+bool AimSkill = false;
+bool MuaFlo   = false;
+
+struct HoK_Vec3 { float X, Y, Z; };
+struct HoK_Vec2 { float x, y; };
+
+static float   g_MyX = 0,  g_MyZ = 0;
+static float   g_EneX = 0, g_EneZ = 0;
+static bool    g_HasTarget = false;
+static int32_t g_AimDeg   = 0;
+static void*   g_MyActor  = nullptr;
+
+// Read ActorLinker world position (field at offset 0x50C)
+static HoK_Vec3 ReadPos(void* actor) {
+    if (!actor) return {0, 0, 0};
+    float* f = (float*)((uintptr_t)actor + 0x50C);
+    return {f[0], f[1], f[2]};
+}
+
+// Actor cache – passive, populated by the get_objCamp hook
+#define ACTOR_CACHE_SIZE 20
+struct AEntry { void* ptr; int camp; uint32_t lastFrame; };
+static AEntry   g_cache[ACTOR_CACHE_SIZE] = {};
+static uint32_t g_frameCounter = 0;
+
+static bool   (*fn_isHostPlayer)(void*) = nullptr; // ActorHelperProxy::IsHostPlayerView (static)
+static int    (*fn_objCamp)(void*)      = nullptr; // ActorLinker::get_objCamp (instance)
+
+// ── Hook: ActorLinker::get_objCamp ── (passively records every actor + its camp)
+static int (*_get_objCamp)(void* actor) = nullptr;
+static int new_get_objCamp(void* actor) {
+    int camp = _get_objCamp ? _get_objCamp(actor) : 0;
+    if (actor && camp > 0 && (AimSkill || MuaFlo)) {
+        for (int i = 0; i < ACTOR_CACHE_SIZE; i++) {
+            if (g_cache[i].ptr == actor) { g_cache[i].lastFrame = g_frameCounter; return camp; }
+            if (!g_cache[i].ptr) { g_cache[i] = {actor, camp, g_frameCounter}; return camp; }
+        }
+    }
+    return camp;
+}
+
+// ── Hook: CSkillButtonManager::UpdateLogic ── (runs each game tick)
+static void (*_UpdateLogic)(void* ins, int delta) = nullptr;
+static void new_UpdateLogic(void* ins, int delta) {
+    if (_UpdateLogic) _UpdateLogic(ins, delta);
+    if (!ins || (!AimSkill && !MuaFlo)) return;
+    if (!fn_isHostPlayer || !fn_objCamp) return;
+
+    g_frameCounter++;
+
+    // Expire stale cache entries (not seen for >300 frames ~5 s at 60fps)
+    for (int i = 0; i < ACTOR_CACHE_SIZE; i++) {
+        if (g_cache[i].ptr && g_frameCounter - g_cache[i].lastFrame > 300) {
+            if (g_cache[i].ptr == g_MyActor) g_MyActor = nullptr;
+            g_cache[i].ptr = nullptr;
+        }
+    }
+
+    // Locate local player
+    if (!g_MyActor || !fn_isHostPlayer(g_MyActor)) {
+        g_MyActor = nullptr;
+        for (int i = 0; i < ACTOR_CACHE_SIZE; i++) {
+            if (!g_cache[i].ptr) continue;
+            if (fn_isHostPlayer(g_cache[i].ptr)) { g_MyActor = g_cache[i].ptr; break; }
+        }
+        if (!g_MyActor) return;
+    }
+
+    HoK_Vec3 mp = ReadPos(g_MyActor);
+    g_MyX = mp.X; g_MyZ = mp.Z;
+
+    int myCamp = fn_objCamp(g_MyActor);
+    void* best = nullptr;
+    float bestDist = 25.0f;
+
+    for (int i = 0; i < ACTOR_CACHE_SIZE; i++) {
+        void* actor = g_cache[i].ptr;
+        if (!actor || actor == g_MyActor) continue;
+        if (g_cache[i].camp == myCamp || g_cache[i].camp == 0) continue;
+        HoK_Vec3 ep = ReadPos(actor);
+        float dx = ep.X - g_MyX, dz = ep.Z - g_MyZ;
+        float dist = sqrtf(dx * dx + dz * dz);
+        if (dist < bestDist) { bestDist = dist; best = actor; }
+    }
+
+    if (best) {
+        HoK_Vec3 ep = ReadPos(best);
+        g_EneX = ep.X; g_EneZ = ep.Z;
+        g_HasTarget = true;
+        float rad = atan2f(ep.X - g_MyX, ep.Z - g_MyZ);
+        g_AimDeg = (int32_t)(rad * 180.0f / (float)M_PI);
+        if (g_AimDeg < 0) g_AimDeg += 360;
+    } else {
+        g_EneX = g_EneZ = 0; g_HasTarget = false; g_AimDeg = 0;
+    }
+}
+
+// ── Hook: GetCurSkillDirDegree ── (redirects skill aim when AimSkill is on)
+static int32_t (*_GetCurSkillDirDegree)(void* ins) = nullptr;
+static int32_t new_GetCurSkillDirDegree(void* ins) {
+    if (AimSkill && g_HasTarget) return g_AimDeg;
+    return _GetCurSkillDirDegree ? _GetCurSkillDirDegree(ins) : 0;
+}
+
+// ── Hook: SendMoveDirectionCmd ── (redirects movement toward nearest enemy)
+static void (*_SendMoveCmd)(int32_t idx, HoK_Vec2 dir) = nullptr;
+static void new_SendMoveCmd(int32_t idx, HoK_Vec2 dir) {
+    if (MuaFlo && g_HasTarget) {
+        float dx = g_EneX - g_MyX, dz = g_EneZ - g_MyZ;
+        float len = sqrtf(dx * dx + dz * dz);
+        if (len > 0.5f) {
+            HoK_Vec2 nd = {dx / len, dz / len};
+            if (_SendMoveCmd) _SendMoveCmd(idx, nd);
+            return;
+        }
+    }
+    if (_SendMoveCmd) _SendMoveCmd(idx, dir);
+}
+// ─────────────────────────────────────────────────────────────────────────────
 #include "imgui/Iconcpp.h"
 #include "AutoUpdate/IL2CppSDKGenerator/Il2Cpp.h"
 #include "AutoUpdate/Tools/Call_Tools.h"
@@ -536,6 +657,42 @@ void DrawMenu() {
 
             ImGui::EndChild();
         }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ── Aim Skill ────────────────────────────────────────────────────
+        if (ImGui::Checkbox("Aim Skill", &AimSkill)) {
+            if (!AimSkill) { g_HasTarget = false; g_AimDeg = 0; }
+        }
+        if (AimSkill) {
+            if (g_HasTarget) {
+                float d = sqrtf((g_EneX - g_MyX) * (g_EneX - g_MyX) +
+                                (g_EneZ - g_MyZ) * (g_EneZ - g_MyZ));
+                ImGui::TextColored(ImColor(0, 255, 128),
+                    "  " ICON_FA_CROSSHAIRS " Target locked (%.1f units)", d);
+            } else {
+                ImGui::TextColored(ImColor(180, 180, 180),
+                    "  " ICON_FA_SEARCH " Scanning...");
+            }
+        }
+
+        ImGui::Spacing();
+
+        // ── Auto Flo ─────────────────────────────────────────────────────
+        if (ImGui::Checkbox("Auto Flo", &MuaFlo)) {
+            if (!MuaFlo) { g_HasTarget = false; }
+        }
+        if (MuaFlo) {
+            if (g_HasTarget) {
+                ImGui::TextColored(ImColor(255, 220, 50),
+                    "  " ICON_FA_ARROW_RIGHT " Moving toward enemy");
+            } else {
+                ImGui::TextColored(ImColor(180, 180, 180),
+                    "  " ICON_FA_SEARCH " No enemy found");
+            }
+        }
     }
     else if (activeFeature == 1) {
         ImGui::Columns(2, "deviceInfo", false);
@@ -809,6 +966,7 @@ void hack_injec() {
   }
   sleep(5);
   Il2CppAttach("libil2cpp.so");
+  il2cpp_base = il2cppMap.startAddress;
 
   // ── Unlock Skin hooks ────────────────────────────────────────────────────
   void* skAddr;
@@ -826,6 +984,26 @@ void hack_injec() {
 
   skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "WearHeroSkin", 2);
   if (skAddr) DobbyHook(skAddr, (void*)new_WearHeroSkin, (void**)&_WearHeroSkin);
+
+  // ── Aim Skill + Auto Flo ─────────────────────────────────────────────────
+  fn_isHostPlayer = (bool(*)(void*))getRealAddr(0x65BF370); // ActorHelperProxy::IsHostPlayerView
+  fn_objCamp      = (int(*)(void*))getRealAddr(0x6216C2C);  // ActorLinker::get_objCamp
+
+  void* fAddr;
+  fAddr = getRealAddr(0x6216C2C);  // get_objCamp (same fn, hook for passive tracking)
+  if (fAddr) DobbyHook(fAddr, (void*)new_get_objCamp, (void**)&_get_objCamp);
+  // NOTE: fn_objCamp and _get_objCamp now share the same trampoline after hook;
+  // use _get_objCamp for actual camp reads inside UpdateLogic to avoid re-entry
+  fn_objCamp = _get_objCamp;
+
+  fAddr = getRealAddr(0x5D2EB7C);  // CSkillButtonManager::UpdateLogic
+  if (fAddr) DobbyHook(fAddr, (void*)new_UpdateLogic, (void**)&_UpdateLogic);
+
+  fAddr = getRealAddr(0x5D16F44);  // CSkillButtonManager::GetCurSkillDirDegree
+  if (fAddr) DobbyHook(fAddr, (void*)new_GetCurSkillDirDegree, (void**)&_GetCurSkillDirDegree);
+
+  fAddr = getRealAddr(0x59E2324);  // PlayerConnection.PTI.FST::SendMoveDirectionCmd (static)
+  if (fAddr) DobbyHook(fAddr, (void*)new_SendMoveCmd, (void**)&_SendMoveCmd);
 
   ImGuiOK = true;
 }
