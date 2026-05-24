@@ -86,18 +86,22 @@ static int    (*fn_objCamp)(void*)      = nullptr; // ActorLinker::get_objCamp (
 static uint32_t g_warmupCount = 0;
 #define WARMUP_THRESHOLD 200
 
-// ── Hook: ActorLinker::get_objCamp ── (passively records every actor + its camp)
-static int (*_get_objCamp)(void* actor) = nullptr;
-static int new_get_objCamp(void* actor) {
-    int camp = _get_objCamp ? _get_objCamp(actor) : 0;
-    // Only cache after warmup; loading-phase actors are cleared by UpdateLogic until then
-    if (actor && camp > 0 && (AimSkill || MuaFlo) && g_warmupCount >= WARMUP_THRESHOLD) {
+// ── Hook: ActorLinker::UpdateLogic ── (builds actor/camp cache each tick per actor)
+// Hooked instead of get_objCamp because the getter is too short (~8 bytes) for Dobby's
+// far branch trampoline (16 bytes), which would overwrite adjacent code and cause crashes.
+// UpdateLogic is a substantial function, safe to hook.
+static void (*_ActorUpdateLogic)(void* actor, int delta) = nullptr;
+static void new_ActorUpdateLogic(void* actor, int delta) {
+    if (_ActorUpdateLogic) _ActorUpdateLogic(actor, delta);
+    if (!actor || (!AimSkill && !MuaFlo)) return;
+    if (!fn_objCamp || g_warmupCount < WARMUP_THRESHOLD) return;
+    int camp = fn_objCamp(actor);
+    if (camp > 0) {
         for (int i = 0; i < ACTOR_CACHE_SIZE; i++) {
-            if (g_cache[i].ptr == actor) { g_cache[i].lastFrame = g_frameCounter; return camp; }
-            if (!g_cache[i].ptr) { g_cache[i] = {actor, camp, g_frameCounter}; return camp; }
+            if (g_cache[i].ptr == actor) { g_cache[i].camp = camp; g_cache[i].lastFrame = g_frameCounter; return; }
+            if (!g_cache[i].ptr) { g_cache[i] = {actor, camp, g_frameCounter}; return; }
         }
     }
-    return camp;
 }
 
 // ── Hook: CSkillButtonManager::UpdateLogic ── (runs each game tick)
@@ -1023,14 +1027,17 @@ void hack_injec() {
   fn_isHostPlayer = (bool(*)(void*))Il2CppGetMethodOffset(
       "Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorHelperProxy", "IsHostPlayerView", 1);
 
-  void* fAddr;
-  // get_objCamp – hook passively to build actor/camp cache
-  fAddr = Il2CppGetMethodOffset(
+  // fn_objCamp: direct call only – NOT hooked to avoid patching a short getter
+  fn_objCamp = (int(*)(void*))Il2CppGetMethodOffset(
       "Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "get_objCamp", 0);
-  if (fAddr) DobbyHook(fAddr, (void*)new_get_objCamp, (void**)&_get_objCamp);
-  fn_objCamp = _get_objCamp; // use trampoline so UpdateLogic reads camp without re-entering hook
 
-  // UpdateLogic – drives the target-finding loop each game tick
+  void* fAddr;
+  // ActorLinker::UpdateLogic – per-actor tick hook, builds the camp cache safely
+  fAddr = Il2CppGetMethodOffset(
+      "Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "UpdateLogic", 1);
+  if (fAddr) DobbyHook(fAddr, (void*)new_ActorUpdateLogic, (void**)&_ActorUpdateLogic);
+
+  // CSkillButtonManager::UpdateLogic – drives the target-finding loop each game tick
   fAddr = Il2CppGetMethodOffset(
       "Scripts.GameCore.dll", "Assets.Scripts.GameSystem", "CSkillButtonManager", "UpdateLogic", 1);
   if (fAddr) DobbyHook(fAddr, (void*)new_UpdateLogic, (void**)&_UpdateLogic);
