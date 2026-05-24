@@ -81,11 +81,17 @@ static uint32_t g_frameCounter = 0;
 static bool   (*fn_isHostPlayer)(void*) = nullptr; // ActorHelperProxy::IsHostPlayerView (static)
 static int    (*fn_objCamp)(void*)      = nullptr; // ActorLinker::get_objCamp (instance)
 
+// Warmup: skip actor processing until UpdateLogic has fired N times after features enabled.
+// This prevents using stale loading-phase actor pointers that were cached by get_objCamp.
+static uint32_t g_warmupCount = 0;
+#define WARMUP_THRESHOLD 200
+
 // ── Hook: ActorLinker::get_objCamp ── (passively records every actor + its camp)
 static int (*_get_objCamp)(void* actor) = nullptr;
 static int new_get_objCamp(void* actor) {
     int camp = _get_objCamp ? _get_objCamp(actor) : 0;
-    if (actor && camp > 0 && (AimSkill || MuaFlo)) {
+    // Only cache after warmup; loading-phase actors are cleared by UpdateLogic until then
+    if (actor && camp > 0 && (AimSkill || MuaFlo) && g_warmupCount >= WARMUP_THRESHOLD) {
         for (int i = 0; i < ACTOR_CACHE_SIZE; i++) {
             if (g_cache[i].ptr == actor) { g_cache[i].lastFrame = g_frameCounter; return camp; }
             if (!g_cache[i].ptr) { g_cache[i] = {actor, camp, g_frameCounter}; return camp; }
@@ -98,8 +104,26 @@ static int new_get_objCamp(void* actor) {
 static void (*_UpdateLogic)(void* ins, int delta) = nullptr;
 static void new_UpdateLogic(void* ins, int delta) {
     if (_UpdateLogic) _UpdateLogic(ins, delta);
-    if (!ins || (!AimSkill && !MuaFlo)) return;
+    if (!ins || (!AimSkill && !MuaFlo)) {
+        // Features turned off: wipe all state so stale entries don't survive re-enable
+        if (g_warmupCount > 0) {
+            g_warmupCount = 0;
+            g_MyActor = nullptr;
+            g_HasTarget = false;
+            g_frameCounter = 0;
+            for (int i = 0; i < ACTOR_CACHE_SIZE; i++) g_cache[i].ptr = nullptr;
+        }
+        return;
+    }
     if (!fn_isHostPlayer || !fn_objCamp) return;
+
+    g_warmupCount++;
+    if (g_warmupCount < WARMUP_THRESHOLD) {
+        // Loading phase: aggressively clear any actors that snuck in via get_objCamp
+        g_MyActor = nullptr;
+        for (int i = 0; i < ACTOR_CACHE_SIZE; i++) g_cache[i].ptr = nullptr;
+        return;
+    }
 
     g_frameCounter++;
 
@@ -151,10 +175,11 @@ static void new_UpdateLogic(void* ins, int delta) {
 }
 
 // ── Hook: GetCurSkillDirDegree ── (redirects skill aim when AimSkill is on)
-static int32_t (*_GetCurSkillDirDegree)(void* ins) = nullptr;
-static int32_t new_GetCurSkillDirDegree(void* ins) {
-    if (AimSkill && g_HasTarget) return g_AimDeg;
-    return _GetCurSkillDirDegree ? _GetCurSkillDirDegree(ins) : 0;
+// Actual signature: System.Int16 GetCurSkillDirDegree(SkillSlotType skillSlotType)
+static int16_t (*_GetCurSkillDirDegree)(void* ins, int32_t slotType) = nullptr;
+static int16_t new_GetCurSkillDirDegree(void* ins, int32_t slotType) {
+    if (AimSkill && g_HasTarget) return (int16_t)g_AimDeg;
+    return _GetCurSkillDirDegree ? _GetCurSkillDirDegree(ins, slotType) : 0;
 }
 
 // ── Hook: SendMoveDirectionCmd ── (redirects movement toward nearest enemy)
@@ -988,9 +1013,10 @@ void hack_injec() {
 
   // ── Aim Skill + Auto Flo (auto-update: name-based lookups) ───────────────
   // Resolve ActorLinker.position field offset dynamically
+  // Il2CppGetFieldOffset returns (size_t)-1 on failure, so check it's a sane struct offset
   {
     size_t off = Il2CppGetFieldOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "position");
-    if (off) g_posOffset = off;
+    if (off > 0 && off < 0x10000) g_posOffset = off;
   }
 
   // IsHostPlayerView – static helper, called directly (not hooked)
@@ -1009,9 +1035,9 @@ void hack_injec() {
       "Scripts.GameCore.dll", "Assets.Scripts.GameSystem", "CSkillButtonManager", "UpdateLogic", 1);
   if (fAddr) DobbyHook(fAddr, (void*)new_UpdateLogic, (void**)&_UpdateLogic);
 
-  // GetCurSkillDirDegree – override to return aimed direction
+  // GetCurSkillDirDegree – override to return aimed direction (1 arg: SkillSlotType, returns Int16)
   fAddr = Il2CppGetMethodOffset(
-      "Scripts.GameCore.dll", "Assets.Scripts.GameSystem", "CSkillButtonManager", "GetCurSkillDirDegree", 0);
+      "Scripts.GameCore.dll", "Assets.Scripts.GameSystem", "CSkillButtonManager", "GetCurSkillDirDegree", 1);
   if (fAddr) DobbyHook(fAddr, (void*)new_GetCurSkillDirDegree, (void**)&_GetCurSkillDirDegree);
 
   // SendMoveDirectionCmd – redirect auto-movement toward nearest enemy
