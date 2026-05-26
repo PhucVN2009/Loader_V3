@@ -870,25 +870,22 @@ void hack_injec() {
   mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "CheckVisible", 3);
   if (mapAddr) DobbyHook(mapAddr, (void*)new_CheckVisible, (void**)&_CheckVisible);
 
-  // ── Layer 4: Dead-reckoning position extrapolation ────────────────────────
-  // SGC::NtfActorMoveState – track which actors are currently walking
-  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "NtfActorMoveState", 2);
-  if (mapAddr) DobbyHook(mapAddr, (void*)new_NtfActorMoveState, (void**)&_NtfActorMoveState);
-
-  // ActorLinker::HOK_OnLateUpdate – per-frame per-actor update; apply extrapolated position
+  // ── Layer 4: Transform sync for out-of-sight actors ─────────────────────
+  // HOK_OnLateUpdate runs every frame per actor; we use it to call
+  // UpdateMoveComponent() for OOS actors so position → myTransform is synced.
   mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "HOK_OnLateUpdate", 1);
   if (mapAddr) DobbyHook(mapAddr, (void*)new_HOKLateUpdate, (void**)&_HOKLateUpdate);
 
-  // UnityEngine.Transform::set_position_Injected – write extrapolated pos to Unity Transform
+  // Primary sync: ActorLinker::UpdateMoveComponent() (private, 0 args)
+  {
+    void* uc = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "UpdateMoveComponent", 0);
+    if (uc) _UpdateMoveComp = (void (*)(void*))uc;
+  }
+
+  // Fallback sync: UnityEngine.Transform::set_position_Injected(ref Vector3)
   {
     void* tp = Il2CppGetMethodOffset("UnityEngine.CoreModule.dll", "UnityEngine", "Transform", "set_position_Injected", 1);
     if (tp) _TransformSetPosInj = (void (*)(void*, float*))tp;
-  }
-
-  // ActorLinker::UpdatePosition() 0-arg – optional internal sync after writing position
-  {
-    void* up = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "UpdatePosition", 0);
-    if (up) _ActorUpdatePosNoArg = (void (*)(void*))up;
   }
 
   // ── AnoSDK bypass: hook report-data functions so no reports are uploaded ──
