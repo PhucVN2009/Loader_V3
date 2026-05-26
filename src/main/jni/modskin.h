@@ -70,14 +70,18 @@ namespace CSProtocol {
 
 // ---------------------------------------------------------------------------
 // hook_unpack – patch wSkinID after server message is decoded
+// heroId == 0  →  apply to ALL heroes
+// heroId != 0  →  apply only to that specific hero
 // ---------------------------------------------------------------------------
 static void hook_unpack(CSProtocol::COMDT_HERO_COMMON_INFO* instance) {
     if (!CSProtocol::saveData::enable) return;
     if (instance == nullptr) return;
-    if (instance->getdwHeroID() == CSProtocol::saveData::heroId
-        && CSProtocol::saveData::heroId != 0
-        && CSProtocol::saveData::skinId != 0)
-    {
+    if (CSProtocol::saveData::skinId == 0) return;
+
+    bool match = (CSProtocol::saveData::heroId == 0) ||
+                 (instance->getdwHeroID() == CSProtocol::saveData::heroId);
+
+    if (match) {
         CSProtocol::saveData::arrayUnpackSkin.emplace_back(instance, instance->getwSkinID());
         instance->setwSkinID(CSProtocol::saveData::skinId);
     }
@@ -98,11 +102,7 @@ static int32_t new_unpack(void* instance, void* srcBuf, uint32_t cutVer) {
 // ---------------------------------------------------------------------------
 static bool (*_IsCanUseSkin)(void* instance, uint32_t heroId, uint32_t skinId, bool includeHeroConditions);
 static bool new_IsCanUseSkin(void* instance, uint32_t heroId, uint32_t skinId, bool includeHeroConditions) {
-    if (unlockskin) {
-        if (heroId != 0)
-            CSProtocol::saveData::setData(heroId, (uint16_t)skinId);
-        return true;
-    }
+    if (unlockskin) return true;
     if (!_IsCanUseSkin) return false;
     return _IsCanUseSkin(instance, heroId, skinId, includeHeroConditions);
 }
@@ -125,10 +125,8 @@ static bool new_IsHaveHeroSkin(void* instance, uint32_t heroId, uint32_t skinId,
 // ---------------------------------------------------------------------------
 static uint32_t (*_GetHeroWearSkinId)(void* instance, uint32_t heroID);
 static uint32_t new_GetHeroWearSkinId(void* instance, uint32_t heroID) {
-    if (unlockskin) {
-        CSProtocol::saveData::setEnable(true);
+    if (unlockskin && CSProtocol::saveData::enable && CSProtocol::saveData::skinId != 0)
         return CSProtocol::saveData::skinId;
-    }
     if (!_GetHeroWearSkinId) return 0;
     return _GetHeroWearSkinId(instance, heroID);
 }

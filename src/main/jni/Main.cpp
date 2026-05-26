@@ -447,7 +447,7 @@ void DrawMenu() {
     ImVec4 rainbow = HSVtoRGB(hue, 1.0f, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_Separator, rainbow);
     ImGui::PushStyleColor(ImGuiCol_CheckMark, rainbow);
-    ImGui::TextColored(rainbow, ICON_FA_SUN " VIP MODMENU BY - YOUR NAME -");
+    ImGui::TextColored(rainbow, ICON_FA_SUN " Hok Mod - By Telegram @userKeera");
     ImGui::PopStyleColor();
     ImGui::Spacing();
     ImGui::Separator();
@@ -481,23 +481,16 @@ void DrawMenu() {
 
         // ── Unlock Skin ───────────────────────────────────────────────────
         if (ImGui::Checkbox("Unlock Skin", &unlockskin)) {
-            if (!unlockskin) {
-                CSProtocol::saveData::resetArrayUnpackSkin();
-            } else {
-                // Auto-apply current values when feature is toggled on
-                CSProtocol::saveData::setData((uint32_t)heroid, (uint16_t)skinid);
-                CSProtocol::saveData::setEnable(true);
-            }
+            if (!unlockskin) CSProtocol::saveData::resetArrayUnpackSkin();
         }
 
         if (unlockskin) {
             ImGui::Spacing();
+            ImGui::InputInt("Hero ID", &heroid);
+            ImGui::InputInt("Skin ID", &skinid);
+            ImGui::Spacing();
 
-            // Auto-apply immediately whenever Hero ID or Skin ID changes
-            bool changed = false;
-            changed |= ImGui::InputInt("Hero ID", &heroid);
-            changed |= ImGui::InputInt("Skin ID", &skinid);
-            if (changed) {
+            if (ImGui::Button("Apply Skin", ImVec2(-1, 55))) {
                 CSProtocol::saveData::setData((uint32_t)heroid, (uint16_t)skinid);
                 CSProtocol::saveData::setEnable(true);
             }
@@ -515,12 +508,15 @@ void DrawMenu() {
                 "=== HOW TO USE UNLOCK SKIN ===");
             ImGui::TextWrapped(
                 "1. Turn ON 'Unlock Skin' toggle.\n"
-                "2. Enter Hero ID and Skin ID – applied instantly.\n\n"
-                "Example: Allain has 6 skins (including default).\n"
-                "Default skin ID = 0, Levi skin is at position 6 but ID = 5.\n"
-                "Set Hero ID = Allain's ID, Skin ID = 5\n"
-                "-> In-game you will see Allain Levi skin.\n"
-                "Same logic works for any other hero.");
+                "2. Hero ID = 0 applies skin to ALL heroes.\n"
+                "   Set Hero ID > 0 to target a specific hero.\n"
+                "3. Enter Skin ID (0 = default skin).\n"
+                "4. Click 'Apply Skin'.\n"
+                "5. Enter a match, the skin will be unlocked.\n\n"
+                "Example: Allain Levi skin:\n"
+                "Hero ID = 0, Skin ID = 5 -> Apply Skin\n"
+                "Spam pick that skin ~5 times in lobby.\n"
+                "-> In-game Allain wears Levi skin.");
 
             ImGui::Spacing();
             ImGui::Separator();
@@ -530,12 +526,15 @@ void DrawMenu() {
                 "=== HUONG DAN UNLOCK SKIN ===");
             ImGui::TextWrapped(
                 "1. Bat 'Unlock Skin'.\n"
-                "2. Nhap Hero ID va Skin ID – tu dong ap dung ngay.\n\n"
-                "Vi du: Tuong Allain co 6 skin (tinh ca mac dinh).\n"
-                "Skin mac dinh ID = 0, skin Levi o vi tri thu 6 nhung ID = 5.\n"
-                "Nhap Hero ID = ID cua Allain, Skin ID = 5\n"
-                "-> Trong tran se thay Allain mac skin Levi.\n"
-                "Cac tuong khac cung tuong tu.");
+                "2. Hero ID = 0 ap dung cho TAT CA tuong.\n"
+                "   Hero ID > 0 chi ap dung cho tuong do.\n"
+                "3. Nhap Skin ID (0 = skin mac dinh).\n"
+                "4. Bam 'Apply Skin'.\n"
+                "5. Vao tran, skin se duoc mo khoa.\n\n"
+                "Vi du: Skin Levi cua Allain:\n"
+                "Hero ID = 0, Skin ID = 5 -> Apply Skin\n"
+                "Spam pick skin do ~5 lan trong lobby.\n"
+                "-> Trong tran Allain mac skin Levi.");
 
             ImGui::EndChild();
         }
@@ -804,6 +803,15 @@ bool is_current_process(const char* target_name) {
 
 
 
+// ── AnoSDK anti-cheat bypass ─────────────────────────────────────────────────
+// Intercept GetReportData variants so the SDK has nothing to upload.
+static int32_t (*_AnoSDKGetReportData)(char* buf, int32_t len)  = nullptr;
+static int32_t (*_AnoSDKGetReportData3)(char* buf, int32_t len) = nullptr;
+static int32_t (*_AnoSDKGetReportData4)(char* buf, int32_t len) = nullptr;
+static int32_t new_AnoSDKGetReportData(char* buf, int32_t len)  { return 0; }
+static int32_t new_AnoSDKGetReportData3(char* buf, int32_t len) { return 0; }
+static int32_t new_AnoSDKGetReportData4(char* buf, int32_t len) { return 0; }
+
 void hack_injec() {
   while (!unityMap.isValid()) {
     unityMap = KittyMemory::getLibraryBaseMap("libunity.so");
@@ -829,6 +837,19 @@ void hack_injec() {
 
   skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "WearHeroSkin", 2);
   if (skAddr) DobbyHook(skAddr, (void*)new_WearHeroSkin, (void**)&_WearHeroSkin);
+
+  // ── AnoSDK bypass: hook report-data functions so no reports are uploaded ──
+  void* anogs = dlopen("libanogs.so", RTLD_NOLOAD);
+  if (anogs) {
+    void* fn;
+    fn = dlsym(anogs, "AnoSDKGetReportData");
+    if (fn) DobbyHook(fn, (void*)new_AnoSDKGetReportData, (void**)&_AnoSDKGetReportData);
+    fn = dlsym(anogs, "AnoSDKGetReportData3");
+    if (fn) DobbyHook(fn, (void*)new_AnoSDKGetReportData3, (void**)&_AnoSDKGetReportData3);
+    fn = dlsym(anogs, "AnoSDKGetReportData4");
+    if (fn) DobbyHook(fn, (void*)new_AnoSDKGetReportData4, (void**)&_AnoSDKGetReportData4);
+    dlclose(anogs);
+  }
 
   ImGuiOK = true;
 }
