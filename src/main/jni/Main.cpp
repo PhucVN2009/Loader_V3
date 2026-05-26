@@ -870,19 +870,21 @@ void hack_injec() {
   mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "CheckVisible", 3);
   if (mapAddr) DobbyHook(mapAddr, (void*)new_CheckVisible, (void**)&_CheckVisible);
 
-  // ── Layer 4: Transform sync for out-of-sight actors ─────────────────────
-  // HOK_OnLateUpdate runs every frame per actor; we use it to call
-  // UpdateMoveComponent() for OOS actors so position → myTransform is synced.
-  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "HOK_OnLateUpdate", 1);
-  if (mapAddr) DobbyHook(mapAddr, (void*)new_HOKLateUpdate, (void**)&_HOKLateUpdate);
+  // ── Layer 4: position sync for out-of-sight actors ───────────────────────
+  // 4a: cache real position/direction from every movement packet we see
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "NtfActorMovementData", 1);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_NtfActorMovementData, (void**)&_NtfActorMovementData);
 
-  // Primary sync: ActorLinker::UpdateMoveComponent() (private, 0 args)
-  {
-    void* uc = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "UpdateMoveComponent", 0);
-    if (uc) _UpdateMoveComp = (void (*)(void*))uc;
-  }
+  // 4b: cache isMoving flag
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "NtfActorMoveState", 2);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_NtfActorMoveState, (void**)&_NtfActorMoveState);
 
-  // Fallback sync: UnityEngine.Transform::set_position_Injected(ref Vector3)
+  // 4c: Interpolation() is the per-render-frame method that writes to myTransform;
+  //     hook it so our position override runs last (after the original write)
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "Interpolation", 0);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_Interpolation, (void**)&_Interpolation);
+
+  // Transform write helper: UnityEngine.Transform::set_position_Injected(ref Vector3)
   {
     void* tp = Il2CppGetMethodOffset("UnityEngine.CoreModule.dll", "UnityEngine", "Transform", "set_position_Injected", 1);
     if (tp) _TransformSetPosInj = (void (*)(void*, float*))tp;
