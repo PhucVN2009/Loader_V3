@@ -48,6 +48,7 @@
 #include "imgui/Roboto-Regular.h"
 #include "QQInj.h"
 #include "modskin.h"
+#include "modmap.h"
 #include "imgui/Icon.h"
 #include "imgui/Iconcpp.h"
 #include "AutoUpdate/IL2CppSDKGenerator/Il2Cpp.h"
@@ -538,6 +539,15 @@ void DrawMenu() {
 
             ImGui::EndChild();
         }
+
+        // ── Map Hack ──────────────────────────────────────────────────────
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Checkbox("Map Hack", &maphack)) {}
+        ImGui::TextColored(ImColor(180, 230, 255),
+            "Reveal all enemies on map and minimap");
     }
     else if (activeFeature == 1) {
         ImGui::Columns(2, "deviceInfo", false);
@@ -837,6 +847,17 @@ void hack_injec() {
 
   skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "WearHeroSkin", 2);
   if (skAddr) DobbyHook(skAddr, (void*)new_WearHeroSkin, (void**)&_WearHeroSkin);
+
+  // ── Map Hack hooks (FogOfWar – Scripts.GameCore.dll, global namespace) ────
+  void* mapAddr;
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "FogOfWar", "IsEnable", 0);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_FowIsEnable, (void**)&_FowIsEnable);
+
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "FogOfWar", "get_enable", 0);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_FowGetEnable, (void**)&_FowGetEnable);
+
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "FogOfWar", "get_EnableRender", 0);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_FowGetEnableRender, (void**)&_FowGetEnableRender);
 
   // ── AnoSDK bypass: hook report-data functions so no reports are uploaded ──
   void* anogs = dlopen("libanogs.so", RTLD_NOLOAD);
