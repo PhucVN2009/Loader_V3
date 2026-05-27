@@ -890,6 +890,28 @@ void hack_injec() {
     if (tp) _TransformSetPosInj = (void (*)(void*, float*))tp;
   }
 
+  // ── Layer 5: HP sync for OOS actors ─────────────────────────────────────
+  // SGC::OnActorCurHpChange(uint32 objID, int32 curHp, int32 totalHp)
+  // Called from the local SGW simulation for every HP change (all actors).
+  // Original handler checks visibility and skips OOS actors; we call
+  // SetActorHp directly via the cached ActorLinker* for them.
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "OnActorCurHpChange", 3);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_OnActorCurHpChange, (void**)&_OnActorCurHpChange);
+
+  // ValueLinkerComponent::SetActorHp(int curHp, int totalHp) – direct writer
+  {
+    void* fn = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic",
+                                      "ValueLinkerComponent", "SetActorHp", 2);
+    if (fn) _SetActorHp = (void (*)(void*, int32_t, int32_t))fn;
+  }
+
+  // ── Layer 6: keep HP callbacks alive when actor goes OOS ─────────────────
+  // SGC::OnActorLeaveView_UnregisterEvt unsubscribes all C# event handlers
+  // (HP change, buff, etc.) for an actor when it leaves the player's sight.
+  // Skipping it keeps those handlers active so HP updates still reach the UI.
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "OnActorLeaveView_UnregisterEvt", 1);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_OnActorLeaveViewUnregEvt, (void**)&_OnActorLeaveViewUnregEvt);
+
   // ── AnoSDK bypass: hook report-data functions so no reports are uploaded ──
   void* anogs = dlopen("libanogs.so", RTLD_NOLOAD);
   if (anogs) {
