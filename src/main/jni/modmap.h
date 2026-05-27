@@ -11,58 +11,59 @@ bool maphack = false;
 // =============================================================================
 // Out-Of-Sight (OOS) actor tracking
 //
-// The server only sends NtfActorMovementData / OnActorCurHpChange through the
-// client's own visibility window.  When an actor leaves sight:
-//   • SGC::OnActorLeaveView_UnregisterEvt() unsubscribes HP/state callbacks
-//   • SGW still fires OnActorCurHpChange from the local simulation for ALL
-//     actors, but the C# handler checks visibility and skips OOS actors
+// Root-cause analysis for frozen enemy positions:
 //
-// Layers implemented here:
-//   1  FogOfWar disabled (FOW rendering)
-//   2  SetVisible / ForceSetVisible forced true
-//   3  CheckVisible always true
-//   4a NtfActorMovementData – cache pos / fwd / speed for dead reckoning
-//   4b NtfActorMoveState    – cache isMoving flag
-//   4c Interpolation()      – push cached/dead-reckoned pos into myTransform
-//   5  OnActorCurHpChange   – force SetActorHp even when OOS
-//   6  OnActorLeaveView_UnregisterEvt – skip so HP callbacks stay registered
+//   When the server decides actor X is OOS for the local player it sends two
+//   independent events:
+//     A) NtfSetActorVisible(X, false, pos, ...)  →  actor.SetVisible(false,false)
+//     B) OnActorLeaveView(X, seq)
+//        └─ ActorManager::OnActorLeaveView  ← removes X from ALL iteration lists
+//        └─ OnActorLeaveView_UnregisterEvt  ← unsubscribes HP/state event handlers
+//
+//   Our Layer-2 hook intercepts (A) and forces logicVis=true so the mesh stays
+//   rendered.  But (B) still fires, removing X from ActorManager's HeroActors /
+//   SoldierActors / ... lists.  Therefore ActorManager::Interpolation() never
+//   iterates X → ActorLinker::Interpolation() is NEVER called → our Layer-4c
+//   hook never fires → myTransform stays frozen.
+//
+// Fix strategy:
+//   Layer 4c  Interpolation()     – per-render-frame Unity path (if in lists)
+//   Layer 4d  HOK_OnInterpolation – SGW path, called for ALL actors always
+//   Layer 7   skip OnActorLeaveView – keep actor in ActorManager render lists
+//   Layer 5   OnActorCurHpChange  – force HP update even when "invisible"
+//   Layer 6   skip UnregisterEvt  – keep HP/buff event handlers registered
 // =============================================================================
 
 struct OOSData {
-    float    pos[3];    // last known world position
-    float    fwd[3];    // forward direction (normalised)
-    float    speed;     // derived from consecutive packet positions
+    float    pos[3];
+    float    fwd[3];    // normalised forward direction
+    float    speed;     // derived from consecutive packets
     bool     isMoving;
-    uint64_t lastNs;    // CLOCK_MONOTONIC timestamp of last packet (ns)
+    uint64_t lastNs;    // CLOCK_MONOTONIC ns
 };
 
-static std::unordered_map<uint32_t, OOSData> g_oosMap;     // actorID → cached movement data
-static std::unordered_map<uint32_t, void*>   g_actorPtrMap; // actorID → ActorLinker*
-static std::unordered_set<uint32_t>          g_oosSet;      // actorIDs currently OOS
+static std::unordered_map<uint32_t, OOSData> g_oosMap;
+static std::unordered_map<uint32_t, void*>   g_actorPtrMap;
+static std::unordered_set<uint32_t>          g_oosSet;
 static std::mutex                            g_oosMtx;
 
-// Function pointers — set in hack_injec()
 static void (*_TransformSetPosInj)(void* transform, float* v3) = nullptr;
 static void (*_SetActorHp)(void* inst, int32_t curHp, int32_t totalHp) = nullptr;
 
-// Cache the ActorLinker* for every actor we observe in any SetVisible call.
-// Required by Layer 5 to look up the actor by objID without managed runtime calls.
 static inline void actor_cache(void* inst) {
     if (!inst) return;
     uint32_t id = *(uint32_t*)((uint64_t)inst + 0x4F4);
     if (!id) return;
-    // Reuse g_oosMtx – caller must NOT already hold it.
     std::lock_guard<std::mutex> lk(g_oosMtx);
     g_actorPtrMap[id] = inst;
 }
-
 static inline void oos_insert(void* inst) {
     if (!inst) return;
     uint32_t id = *(uint32_t*)((uint64_t)inst + 0x4F4);
     if (!id) return;
     std::lock_guard<std::mutex> lk(g_oosMtx);
     g_oosSet.insert(id);
-    g_actorPtrMap[id] = inst; // keep ptr current
+    g_actorPtrMap[id] = inst;
 }
 static inline void oos_remove(uint32_t id) {
     if (!id) return;
@@ -71,82 +72,60 @@ static inline void oos_remove(uint32_t id) {
 }
 
 // =============================================================================
-// LAYER 1 – FogOfWar rendering / logic disabled
+// LAYER 1 – FogOfWar
 // =============================================================================
-
 static bool (*_FowIsEnable)() = nullptr;
 static bool new_FowIsEnable() {
     if (maphack) return false;
-    if (!_FowIsEnable) return false;
-    return _FowIsEnable();
+    return _FowIsEnable ? _FowIsEnable() : false;
 }
-
 static bool (*_FowGetEnable)() = nullptr;
 static bool new_FowGetEnable() {
     if (maphack) return false;
-    if (!_FowGetEnable) return false;
-    return _FowGetEnable();
+    return _FowGetEnable ? _FowGetEnable() : false;
 }
-
 static bool (*_FowGetEnableRender)() = nullptr;
 static bool new_FowGetEnableRender() {
     if (maphack) return false;
-    if (!_FowGetEnableRender) return false;
-    return _FowGetEnableRender();
+    return _FowGetEnableRender ? _FowGetEnableRender() : false;
 }
 
 // =============================================================================
-// LAYER 2 – ActorLinker::SetVisible / ForceSetVisible
+// LAYER 2 – SetVisible / ForceSetVisible
 // =============================================================================
-
 static void (*_ActorSetVisible)(void* inst, bool logicVis, bool meshVis) = nullptr;
 static void new_ActorSetVisible(void* inst, bool logicVis, bool meshVis) {
     if (maphack) {
-        actor_cache(inst); // always keep pointer current
+        actor_cache(inst);
         if (!logicVis) oos_insert(inst);
-        else if (inst) {
-            uint32_t id = *(uint32_t*)((uint64_t)inst + 0x4F4);
-            oos_remove(id);
-        }
+        else if (inst) oos_remove(*(uint32_t*)((uint64_t)inst + 0x4F4));
         logicVis = true; meshVis = true;
     }
     if (_ActorSetVisible) _ActorSetVisible(inst, logicVis, meshVis);
 }
-
 static void (*_ActorForceSetVisible)(void* inst, bool logicVis, bool meshVis) = nullptr;
 static void new_ActorForceSetVisible(void* inst, bool logicVis, bool meshVis) {
     if (maphack) {
         actor_cache(inst);
         if (!logicVis) oos_insert(inst);
-        else if (inst) {
-            uint32_t id = *(uint32_t*)((uint64_t)inst + 0x4F4);
-            oos_remove(id);
-        }
+        else if (inst) oos_remove(*(uint32_t*)((uint64_t)inst + 0x4F4));
         logicVis = true; meshVis = true;
     }
     if (_ActorForceSetVisible) _ActorForceSetVisible(inst, logicVis, meshVis);
 }
 
 // =============================================================================
-// LAYER 3 – SGC::CheckVisible always true
+// LAYER 3 – CheckVisible
 // =============================================================================
-
 static bool (*_CheckVisible)(void* attacker, void* target, int32_t flag) = nullptr;
 static bool new_CheckVisible(void* attacker, void* target, int32_t flag) {
     if (maphack) return true;
-    if (!_CheckVisible) return false;
-    return _CheckVisible(attacker, target, flag);
+    return _CheckVisible ? _CheckVisible(attacker, target, flag) : false;
 }
 
 // =============================================================================
-// LAYER 4a – NtfActorMovementData: cache real position / direction / speed
-//
-// SGW.DisplayInfoData layout (offsets include IL2CPP value-type header +8):
-//   0x08  actorID  (uint32)
-//   0x0C  forward  (VInt3: 3× int32, scale 1000)
-//   0x18  position (Vector3: 3× float)
+// LAYER 4a – NtfActorMovementData: cache pos/fwd/speed
 // =============================================================================
-
 static void (*_NtfActorMovementData)(void* dataPtr) = nullptr;
 static void new_NtfActorMovementData(void* dataPtr) {
     if (_NtfActorMovementData) _NtfActorMovementData(dataPtr);
@@ -154,44 +133,35 @@ static void new_NtfActorMovementData(void* dataPtr) {
 
     uint32_t actorID = *(uint32_t*)((uint64_t)dataPtr + 0x08);
     if (!actorID) return;
-
     float*   pos    = (float*)  ((uint64_t)dataPtr + 0x18);
     int32_t* fwdInt = (int32_t*)((uint64_t)dataPtr + 0x0C);
 
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
     uint64_t nowNs = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 
     std::lock_guard<std::mutex> lk(g_oosMtx);
     OOSData& d = g_oosMap[actorID];
-
     if (d.lastNs > 0) {
-        float dx   = pos[0] - d.pos[0];
-        float dz   = pos[2] - d.pos[2];
-        float dist = sqrtf(dx * dx + dz * dz);
+        float dx = pos[0]-d.pos[0], dz = pos[2]-d.pos[2];
+        float dist = sqrtf(dx*dx + dz*dz);
         float dt   = (nowNs - d.lastNs) / 1e9f;
         if (dt > 0.001f && dt < 2.0f) {
-            float measured = dist / dt;
-            if (measured < 20.0f)
-                d.speed = measured;
+            float m = dist / dt;
+            if (m < 20.0f) d.speed = m;
         }
         d.isMoving = (dist > 0.05f);
     }
-
     d.pos[0] = pos[0]; d.pos[1] = pos[1]; d.pos[2] = pos[2];
-    float fx = fwdInt[0] / 1000.0f;
-    float fy = fwdInt[1] / 1000.0f;
-    float fz = fwdInt[2] / 1000.0f;
-    float mag = sqrtf(fx * fx + fy * fy + fz * fz);
-    if (mag > 0.001f) { fx /= mag; fy /= mag; fz /= mag; }
-    d.fwd[0] = fx; d.fwd[1] = fy; d.fwd[2] = fz;
+    float fx = fwdInt[0]/1000.0f, fy = fwdInt[1]/1000.0f, fz = fwdInt[2]/1000.0f;
+    float mag = sqrtf(fx*fx + fy*fy + fz*fz);
+    if (mag > 0.001f) { fx/=mag; fy/=mag; fz/=mag; }
+    d.fwd[0]=fx; d.fwd[1]=fy; d.fwd[2]=fz;
     d.lastNs = nowNs;
 }
 
 // =============================================================================
-// LAYER 4b – NtfActorMoveState: cache isMoving flag
+// LAYER 4b – NtfActorMoveState
 // =============================================================================
-
 static void (*_NtfActorMoveState)(uint32_t actorID, bool isMoving) = nullptr;
 static void new_NtfActorMoveState(uint32_t actorID, bool isMoving) {
     if (_NtfActorMoveState) _NtfActorMoveState(actorID, isMoving);
@@ -202,23 +172,13 @@ static void new_NtfActorMoveState(uint32_t actorID, bool isMoving) {
 }
 
 // =============================================================================
-// LAYER 4c – Interpolation(): per-render-frame visual sync
-//
-// Override myTransform after the original runs.  For OOS actors:
-//   (a) If ActorLinker.position (0x50C) diverged >1 unit from cached value,
-//       SGW is advancing it → use it directly.
-//   (b) Otherwise dead-reckon: cachedPos + fwd * speed * dt (≤3 s).
-// try_lock avoids stalling the render thread.
+// Shared: sync OOS actor myTransform from ActorLinker.position or dead-reckon.
+// Called from BOTH Interpolation and HOK_OnInterpolation hooks.
 // =============================================================================
-
-static void (*_Interpolation)(void* inst) = nullptr;
-static void new_Interpolation(void* inst) {
-    if (_Interpolation) _Interpolation(inst);
-
+static inline void sync_oos_transform(void* inst) {
     if (!maphack || !inst) return;
     uint32_t objID = *(uint32_t*)((uint64_t)inst + 0x4F4);
     if (!objID) return;
-
     if (!g_oosMtx.try_lock()) return;
     bool isOOS = g_oosSet.count(objID) > 0;
     if (!isOOS) { g_oosMtx.unlock(); return; }
@@ -227,66 +187,72 @@ static void new_Interpolation(void* inst) {
     if (!myTransform || !_TransformSetPosInj) { g_oosMtx.unlock(); return; }
 
     float writePos[3];
-    float* lpos = (float*)((uint64_t)inst + 0x50C);
+    float* lpos = (float*)((uint64_t)inst + 0x50C); // ActorLinker.position
 
     auto it = g_oosMap.find(objID);
     if (it != g_oosMap.end() && it->second.lastNs > 0) {
         OOSData d = it->second;
         g_oosMtx.unlock();
 
-        float ddx = lpos[0] - d.pos[0];
-        float ddz = lpos[2] - d.pos[2];
-
-        if ((ddx * ddx + ddz * ddz) > 1.0f) {
-            writePos[0] = lpos[0]; writePos[1] = lpos[1]; writePos[2] = lpos[2];
+        float ddx = lpos[0]-d.pos[0], ddz = lpos[2]-d.pos[2];
+        if ((ddx*ddx + ddz*ddz) > 1.0f) {
+            // SGW advanced ActorLinker.position → use it directly
+            writePos[0]=lpos[0]; writePos[1]=lpos[1]; writePos[2]=lpos[2];
         } else {
-            writePos[0] = d.pos[0]; writePos[1] = d.pos[1]; writePos[2] = d.pos[2];
+            // Both frozen → dead-reckon from last cached packet
+            writePos[0]=d.pos[0]; writePos[1]=d.pos[1]; writePos[2]=d.pos[2];
             if (d.isMoving && d.speed > 0.05f) {
-                float fwdMag = sqrtf(d.fwd[0]*d.fwd[0] + d.fwd[1]*d.fwd[1] + d.fwd[2]*d.fwd[2]);
-                if (fwdMag > 0.5f && fwdMag < 2.0f) {
-                    struct timespec ts2;
-                    clock_gettime(CLOCK_MONOTONIC, &ts2);
-                    uint64_t nowNs = (uint64_t)ts2.tv_sec * 1000000000ULL + (uint64_t)ts2.tv_nsec;
-                    float dt = (nowNs - d.lastNs) / 1e9f;
+                float fm = sqrtf(d.fwd[0]*d.fwd[0]+d.fwd[1]*d.fwd[1]+d.fwd[2]*d.fwd[2]);
+                if (fm > 0.5f && fm < 2.0f) {
+                    struct timespec ts2; clock_gettime(CLOCK_MONOTONIC, &ts2);
+                    float dt = ((uint64_t)ts2.tv_sec*1000000000ULL+(uint64_t)ts2.tv_nsec - d.lastNs) / 1e9f;
                     if (dt > 0.0f && dt < 3.0f) {
-                        writePos[0] += (d.fwd[0] / fwdMag) * d.speed * dt;
-                        writePos[1] += (d.fwd[1] / fwdMag) * d.speed * dt;
-                        writePos[2] += (d.fwd[2] / fwdMag) * d.speed * dt;
+                        writePos[0] += (d.fwd[0]/fm)*d.speed*dt;
+                        writePos[1] += (d.fwd[1]/fm)*d.speed*dt;
+                        writePos[2] += (d.fwd[2]/fm)*d.speed*dt;
                     }
                 }
             }
         }
     } else {
         g_oosMtx.unlock();
-        writePos[0] = lpos[0]; writePos[1] = lpos[1]; writePos[2] = lpos[2];
+        writePos[0]=lpos[0]; writePos[1]=lpos[1]; writePos[2]=lpos[2];
     }
-
     _TransformSetPosInj(myTransform, writePos);
 }
 
 // =============================================================================
-// LAYER 5 – HP sync for OOS actors
-//
-// SGC::OnActorCurHpChange(uint32 objID, int32 curHp, int32 totalHp) is a
-// static C# method called from the SGW C++ simulation for every HP change,
-// including OOS actors.  The original handler checks actor visibility before
-// calling ValueLinkerComponent::SetActorHp, so OOS actors are silently skipped.
-//
-// We call the original first (handles visible actors), then for any actor in
-// g_oosSet we directly invoke SetActorHp via the cached ActorLinker pointer.
-//
-// ActorLinker layout:
-//   0x400  ValueComponent (ValueLinkerComponent*)
-// ValueLinkerComponent layout:
-//   0x38   actorHp  (int32)
-//   0x3C   actorHpTotal (int32)
+// LAYER 4c – Interpolation(): Unity render-loop path
+// Called by ActorManager::Interpolation() for actors still in its lists.
+// After Layer 7 skips OnActorLeaveView, OOS actors remain in those lists.
 // =============================================================================
+static void (*_Interpolation)(void* inst) = nullptr;
+static void new_Interpolation(void* inst) {
+    if (_Interpolation) _Interpolation(inst);
+    sync_oos_transform(inst);
+}
 
+// =============================================================================
+// LAYER 4d – HOK_OnInterpolation(): SGW engine path
+// Called by the SGW/HOKExtend system for EVERY actor regardless of ActorManager
+// list membership.  This fires even before Layer 7's fix is confirmed working.
+// =============================================================================
+static void (*_HOKOnInterpolation)(void* inst) = nullptr;
+static void new_HOKOnInterpolation(void* inst) {
+    if (_HOKOnInterpolation) _HOKOnInterpolation(inst);
+    sync_oos_transform(inst);
+}
+
+// =============================================================================
+// LAYER 5 – HP sync for OOS actors
+// SGC::OnActorCurHpChange(uint32 objID, int32 curHp, int32 totalHp) is fired
+// by the local SGW simulation for every HP change.  The C# handler checks
+// _logicVisible and skips OOS actors; we bypass via cached ActorLinker*.
+// =============================================================================
 static void (*_OnActorCurHpChange)(uint32_t objID, int32_t curHp, int32_t totalHp) = nullptr;
 static void new_OnActorCurHpChange(uint32_t objID, int32_t curHp, int32_t totalHp) {
     if (_OnActorCurHpChange) _OnActorCurHpChange(objID, curHp, totalHp);
     if (!maphack) return;
-
     if (!g_oosMtx.try_lock()) return;
     bool isOOS = g_oosSet.count(objID) > 0;
     void* actor = nullptr;
@@ -295,28 +261,38 @@ static void new_OnActorCurHpChange(uint32_t objID, int32_t curHp, int32_t totalH
         if (it2 != g_actorPtrMap.end()) actor = it2->second;
     }
     g_oosMtx.unlock();
-
     if (!isOOS || !actor || !_SetActorHp) return;
-
     void* vc = *(void**)((uint64_t)actor + 0x400); // ValueLinkerComponent*
-    if (!vc) return;
-
-    _SetActorHp(vc, curHp, totalHp);
+    if (vc) _SetActorHp(vc, curHp, totalHp);
 }
 
 // =============================================================================
-// LAYER 6 – Prevent HP callback unregistration when actor goes OOS
-//
-// SGC::OnActorLeaveView_UnregisterEvt(uint32 actorID) unsubscribes all C#
-// event handlers (including HP change, buff events) for the given actor.
-// Skipping this call when maphack is on keeps the handlers active so that
-// any HP-change events fired by the SGW simulation still reach the HP bar UI.
+// LAYER 6 – Keep HP/buff callbacks alive (skip UnregisterEvt)
 // =============================================================================
-
 static void (*_OnActorLeaveViewUnregEvt)(uint32_t actorID) = nullptr;
 static void new_OnActorLeaveViewUnregEvt(uint32_t actorID) {
-    if (!maphack) {
+    if (!maphack)
         if (_OnActorLeaveViewUnregEvt) _OnActorLeaveViewUnregEvt(actorID);
-    }
-    // When maphack is on: intentionally skipped — keeps all event subscriptions active.
+    // skipped when maphack: keeps all C# event subscriptions alive
+}
+
+// =============================================================================
+// LAYER 7 – Skip SGC::OnActorLeaveView entirely
+//
+// This is the primary fix for frozen positions.
+// SGC::OnActorLeaveView calls:
+//   ActorManager::OnActorLeaveView  → removes actor from HeroActors/SoldierActors/etc.
+//   OnActorLeaveView_UnregisterEvt  → removes event handlers (also skipped in Layer 6)
+//
+// Without this skip, ActorManager::Interpolation() never iterates OOS actors,
+// so ActorLinker::Interpolation() is never called, and Layer 4c never fires.
+//
+// NtfSetActorVisible(false) fires as a SEPARATE server packet and still calls
+// actor.SetVisible(false,false) → our Layer-2 hook intercepts it and maintains
+// the OOS set for Layers 4c/5.
+// =============================================================================
+static void (*_OnActorLeaveView)(uint32_t actorID, uint32_t objSeq) = nullptr;
+static void new_OnActorLeaveView(uint32_t actorID, uint32_t objSeq) {
+    if (maphack) return; // skip — actor stays in ActorManager render/logic lists
+    if (_OnActorLeaveView) _OnActorLeaveView(actorID, objSeq);
 }

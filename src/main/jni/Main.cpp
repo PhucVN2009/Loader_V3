@@ -879,10 +879,15 @@ void hack_injec() {
   mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "NtfActorMoveState", 2);
   if (mapAddr) DobbyHook(mapAddr, (void*)new_NtfActorMoveState, (void**)&_NtfActorMoveState);
 
-  // 4c: Interpolation() is the per-render-frame method that writes to myTransform;
-  //     hook it so our position override runs last (after the original write)
+  // 4c: Interpolation() – Unity render-loop path (fires after Layer 7 keeps actor in lists)
   mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "Interpolation", 0);
   if (mapAddr) DobbyHook(mapAddr, (void*)new_Interpolation, (void**)&_Interpolation);
+
+  // 4d: HOK_OnInterpolation() – SGW engine path, fires for ALL actors unconditionally.
+  //     Dual-hooks position sync: if actor was removed from ActorManager lists before
+  //     Layer 7's skip takes effect this frame, this path still catches it.
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "HOK_OnInterpolation", 0);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_HOKOnInterpolation, (void**)&_HOKOnInterpolation);
 
   // Transform write helper: UnityEngine.Transform::set_position_Injected(ref Vector3)
   {
@@ -891,26 +896,24 @@ void hack_injec() {
   }
 
   // ── Layer 5: HP sync for OOS actors ─────────────────────────────────────
-  // SGC::OnActorCurHpChange(uint32 objID, int32 curHp, int32 totalHp)
-  // Called from the local SGW simulation for every HP change (all actors).
-  // Original handler checks visibility and skips OOS actors; we call
-  // SetActorHp directly via the cached ActorLinker* for them.
   mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "OnActorCurHpChange", 3);
   if (mapAddr) DobbyHook(mapAddr, (void*)new_OnActorCurHpChange, (void**)&_OnActorCurHpChange);
 
-  // ValueLinkerComponent::SetActorHp(int curHp, int totalHp) – direct writer
   {
     void* fn = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic",
                                       "ValueLinkerComponent", "SetActorHp", 2);
     if (fn) _SetActorHp = (void (*)(void*, int32_t, int32_t))fn;
   }
 
-  // ── Layer 6: keep HP callbacks alive when actor goes OOS ─────────────────
-  // SGC::OnActorLeaveView_UnregisterEvt unsubscribes all C# event handlers
-  // (HP change, buff, etc.) for an actor when it leaves the player's sight.
-  // Skipping it keeps those handlers active so HP updates still reach the UI.
+  // ── Layer 6: keep HP/buff callbacks alive (skip UnregisterEvt) ───────────
   mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "OnActorLeaveView_UnregisterEvt", 1);
   if (mapAddr) DobbyHook(mapAddr, (void*)new_OnActorLeaveViewUnregEvt, (void**)&_OnActorLeaveViewUnregEvt);
+
+  // ── Layer 7: skip OnActorLeaveView → actor stays in ActorManager lists ───
+  // PRIMARY FIX for frozen positions: without this, ActorManager::Interpolation()
+  // never iterates OOS actors so Interpolation() / our Layer-4c hook never fires.
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "OnActorLeaveView", 2);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_OnActorLeaveView, (void**)&_OnActorLeaveView);
 
   // ── AnoSDK bypass: hook report-data functions so no reports are uploaded ──
   void* anogs = dlopen("libanogs.so", RTLD_NOLOAD);
