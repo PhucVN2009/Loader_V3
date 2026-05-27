@@ -909,11 +909,14 @@ void hack_injec() {
   mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "OnActorLeaveView_UnregisterEvt", 1);
   if (mapAddr) DobbyHook(mapAddr, (void*)new_OnActorLeaveViewUnregEvt, (void**)&_OnActorLeaveViewUnregEvt);
 
-  // ── Layer 7: skip OnActorLeaveView → actor stays in ActorManager lists ───
-  // PRIMARY FIX for frozen positions: without this, ActorManager::Interpolation()
-  // never iterates OOS actors so Interpolation() / our Layer-4c hook never fires.
-  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "OnActorLeaveView", 2);
-  if (mapAddr) DobbyHook(mapAddr, (void*)new_OnActorLeaveView, (void**)&_OnActorLeaveView);
+  // ── Layer 7: skip ActorManager::OnActorLeaveView (instance method) ──────
+  // SGC::OnActorLeaveView is left to run normally so actor.SetVisible(false)
+  // still fires → Layer-2 hook captures it → g_oosSet populated for Layers 4c/5.
+  // Only the inner ActorManager::OnActorLeaveView is suppressed so the actor
+  // stays in HeroActors/SoldierActors/... → ActorManager::Interpolation()
+  // still iterates it every frame → Layer 4c fires → positions sync.
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorManager", "OnActorLeaveView", 2);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_ActorMgrLeaveView, (void**)&_ActorMgrLeaveView);
 
   // ── AnoSDK bypass: hook report-data functions so no reports are uploaded ──
   void* anogs = dlopen("libanogs.so", RTLD_NOLOAD);

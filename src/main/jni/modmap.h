@@ -277,22 +277,29 @@ static void new_OnActorLeaveViewUnregEvt(uint32_t actorID) {
 }
 
 // =============================================================================
-// LAYER 7 – Skip SGC::OnActorLeaveView entirely
+// LAYER 7 – Skip ActorManager::OnActorLeaveView (instance method)
 //
-// This is the primary fix for frozen positions.
-// SGC::OnActorLeaveView calls:
-//   ActorManager::OnActorLeaveView  → removes actor from HeroActors/SoldierActors/etc.
-//   OnActorLeaveView_UnregisterEvt  → removes event handlers (also skipped in Layer 6)
+// DIAGNOSIS (confirmed by training-camp observation):
+//   SGC::OnActorLeaveView does TWO things in sequence:
+//     1. actor.SetVisible(false, false)        ← Layer-2 hook intercepts ✓
+//     2. ActorManager.OnActorLeaveView(id,seq) ← removes actor from HeroActors/etc.
 //
-// Without this skip, ActorManager::Interpolation() never iterates OOS actors,
-// so ActorLinker::Interpolation() is never called, and Layer 4c never fires.
+//   Previous Layer 7 skipped SGC::OnActorLeaveView entirely which also skipped
+//   step 1 → actor.SetVisible(false) never called → g_oosSet never populated →
+//   sync_oos_transform() returned immediately for every actor → no fix at all.
 //
-// NtfSetActorVisible(false) fires as a SEPARATE server packet and still calls
-// actor.SetVisible(false,false) → our Layer-2 hook intercepts it and maintains
-// the OOS set for Layers 4c/5.
+// Correct fix: let SGC::OnActorLeaveView run normally (so SetVisible(false)
+// fires → Layer 2 catches it → g_oosSet populated), but skip only the inner
+// ActorManager::OnActorLeaveView call so the actor stays in HeroActors/etc.
+// render lists → ActorManager::Interpolation() still iterates it every frame →
+// Layer 4c fires → sync_oos_transform() runs → position updated.
+//
+// ActorManager::OnActorLeaveView is an INSTANCE method, so native signature is:
+//   void fn(void* actorMgrInst, uint32_t actorID, uint32_t objSeq)
 // =============================================================================
-static void (*_OnActorLeaveView)(uint32_t actorID, uint32_t objSeq) = nullptr;
-static void new_OnActorLeaveView(uint32_t actorID, uint32_t objSeq) {
+static void (*_ActorMgrLeaveView)(void* inst, uint32_t actorID, uint32_t objSeq) = nullptr;
+static void new_ActorMgrLeaveView(void* inst, uint32_t actorID, uint32_t objSeq) {
     if (maphack) return; // skip — actor stays in ActorManager render/logic lists
-    if (_OnActorLeaveView) _OnActorLeaveView(actorID, objSeq);
+    if (_ActorMgrLeaveView) _ActorMgrLeaveView(inst, actorID, objSeq);
 }
+
