@@ -918,6 +918,25 @@ void hack_injec() {
   mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorManager", "OnActorLeaveView", 2);
   if (mapAddr) DobbyHook(mapAddr, (void*)new_ActorMgrLeaveView, (void**)&_ActorMgrLeaveView);
 
+  // ── Layer 8: SGW display-buffer live positions for OOS actors ────────────
+  // Hook ActorManager::Interpolation() (instance method, runs every Unity frame).
+  // After the original finishes updating visible actors we call
+  // sync_oos_from_sgw_buffer() which scans SGW.GetDisplayData() for OOS actors
+  // and force-updates their Unity Transforms from the simulation's live data.
+  {
+    void* ami = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic",
+                                       "ActorManager", "Interpolation", 0);
+    if (ami) DobbyHook(ami, (void*)new_ActorMgrInterpolation, (void**)&_ActorMgrInterpolation);
+
+    // SGW.GetDisplayData / GetDisplayData_Count are STATIC methods – no instance.
+    // We resolve them as plain function pointers (no DobbyHook needed).
+    void* gd = Il2CppGetMethodOffset("Scripts.Base.dll", "", "SGW", "GetDisplayData", 0);
+    if (gd) _SGWGetDisplayData = (void*(*)())gd;
+
+    void* gdc = Il2CppGetMethodOffset("Scripts.Base.dll", "", "SGW", "GetDisplayData_Count", 0);
+    if (gdc) _SGWGetDisplayDataCount = (uint32_t(*)())gdc;
+  }
+
   // ── AnoSDK bypass: hook report-data functions so no reports are uploaded ──
   void* anogs = dlopen("libanogs.so", RTLD_NOLOAD);
   if (anogs) {
