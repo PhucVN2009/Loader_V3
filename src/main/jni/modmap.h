@@ -11,31 +11,35 @@ bool maphack = false;
 // =============================================================================
 // Out-Of-Sight (OOS) actor tracking
 //
-// Root-cause analysis for frozen enemy positions:
+// Root-cause of frozen / jittery enemy positions:
 //
-//   When the server decides actor X is OOS for the local player it sends two
-//   independent events:
-//     A) NtfSetActorVisible(X, false, pos, ...)  →  actor.SetVisible(false,false)
-//     B) OnActorLeaveView(X, seq)
-//        └─ ActorManager::OnActorLeaveView  ← removes X from ALL iteration lists
-//        └─ OnActorLeaveView_UnregisterEvt  ← unsubscribes HP/state event handlers
+//   A) NtfSetActorVisible(X, false, pos)  →  actor.SetVisible(false)
+//   B) ActorManager::OnActorLeaveView     →  removes X from render lists
+//   C) OnActorLeaveView_UnregEvt          →  unsubscribes HP callbacks
+//   D) Server stops sending NtfActorMovementData for X
 //
-//   Our Layer-2 hook intercepts (A) and forces logicVis=true so the mesh stays
-//   rendered.  But (B) still fires, removing X from ActorManager's HeroActors /
-//   SoldierActors / ... lists.  Therefore ActorManager::Interpolation() never
-//   iterates X → ActorLinker::Interpolation() is NEVER called → our Layer-4c
-//   hook never fires → myTransform stays frozen.
+// Layer overview
+// ──────────────
+//   Layer 1   FogOfWar hooks         – remove visual fog
+//   Layer 2   SetVisible intercept   – force logicVis=true, track OOS set
+//   Layer 3   CheckVisible           – always return true
+//   Layer 4a  NtfActorMovementData   – cache position/direction from server pkts
+//   Layer 4b  NtfActorMoveState      – cache isMoving flag
+//   Layer 4c  ActorLinker::Interp()  – PASS-THROUGH only (no extra write)
+//   Layer 4d  HOK_OnInterpolation()  – PASS-THROUGH only (no extra write)
+//   Layer 5   OnActorCurHpChange     – bypass visibility → push HP update
+//   Layer 6   skip UnregEvt          – keep HP/buff callbacks alive
+//   Layer 7   skip ActorMgr::OnActorLeaveView – keep actor in render lists
+//   Layer 8   ActorManager::Interp   – PRIMARY position driver for OOS actors:
+//               1. update positions from SGW.GetDisplayData() (all actors, live)
+//               2. for actors absent from SGW buffer: dead-reckon fallback
+//               3. smooth lerp to avoid physics-step jitter
 //
-// Fix strategy:
-//   Layer 4c  Interpolation()       – per-render-frame Unity path (if in lists)
-//   Layer 4d  HOK_OnInterpolation   – SGW path, called for ALL actors always
-//   Layer 7   skip OnActorLeaveView – keep actor in ActorManager render lists
-//   Layer 5   OnActorCurHpChange    – force HP update even when "invisible"
-//   Layer 6   skip UnregisterEvt    – keep HP/buff event handlers registered
-//   Layer 8   ActorMgr::Interpolation + SGW.GetDisplayData()
-//             – reads the SGW simulation's live display buffer (all actors,
-//               including OOS) once per frame and force-updates their Unity
-//               Transforms. Fallback: dead-reckon from last cached packet.
+// Jitter fix (why 4c/4d no longer write to myTransform):
+//   HOK_OnInterpolation fires AFTER ActorMgr::Interpolation.  If 4d wrote
+//   dead-reckoned positions it would overwrite Layer 8's SGW positions every
+//   frame → oscillation.  Layer 8 is the sole OOS position driver; 4c/4d
+//   just call through to the original for non-position work (animations etc.)
 // =============================================================================
 
 struct OOSData {
@@ -54,13 +58,11 @@ static std::mutex                            g_oosMtx;
 static void (*_TransformSetPosInj)(void* transform, float* v3) = nullptr;
 static void (*_SetActorHp)(void* inst, int32_t curHp, int32_t totalHp) = nullptr;
 
-// SGW.GetDisplayData / GetDisplayData_Count (Scripts.Base.dll, class "SGW")
-// Returns a pointer to the raw DisplayInfoData array maintained by the SGW
-// simulation engine.  This array is updated for ALL actors in the simulation
-// (not just visible ones), so it is the authoritative source of live OOS actor
-// positions.
+// SGW display-buffer function pointers (Scripts.Base.dll, class "SGW")
+// SGW.GetDisplayData()       → raw pointer to DisplayInfoData array (ALL actors)
+// SGW.GetDisplayData_Count() → element count
 //
-// DisplayInfoData IL2CPP layout (stride 0x48 bytes):
+// IL2CPP DisplayInfoData stride = 0x50 bytes per element:
 //   +0x00  8-byte IL2CPP value-type header
 //   +0x08  uint32  actorID
 //   +0x0C  VInt3   forward  (3 × int32, scale 1000)
@@ -69,17 +71,29 @@ static void (*_SetActorHp)(void* inst, int32_t curHp, int32_t totalHp) = nullptr
 //   +0x28  Quaternion rotation (4 × float)
 //   +0x38  uint32  parentObjID
 //   +0x3C  DisplayInfoPredictData predictData
+//            +0x3C  Vector3 shadowPosition
+//            +0x48  uint32  lerpDiff          ← new field (this update)
+//            +0x4C  byte    lerpToLogic_bool  ← new field
+//            +0x4D  byte    useShadow_bool    ← new field
+//            +0x4E  byte    predictState      ← new field
+//            +0x4F  byte    padding
 static void*    (*_SGWGetDisplayData)()      = nullptr;
 static uint32_t (*_SGWGetDisplayDataCount)() = nullptr;
 
-static constexpr uint32_t k_DispStride    = 0x48;
-static constexpr uint32_t k_DispIDOff     = 0x08;
-static constexpr uint32_t k_DispPosOff    = 0x18;
+static constexpr uint32_t k_DispStride = 0x50;
+static constexpr uint32_t k_DispIDOff  = 0x08;
+static constexpr uint32_t k_DispPosOff = 0x18;
 
-// Dead-reckoning time cap: show actor at last-extrapolated position up to
-// k_DRCapSec seconds.  Beyond this we still show the last extrapolated spot
-// (not the origin) to avoid the model teleporting.
-static constexpr float    k_DRCapSec      = 12.0f;
+// Dead-reckoning cap: extrapolate at most k_DRCapSec seconds
+static constexpr float k_DRCapSec = 12.0f;
+
+// Lerp smoothing alpha for physics-step jitter suppression.
+// At 60fps, alpha=0.5 converges to target in ~3 frames; large jumps are
+// snapped immediately (see k_SnapDistSq threshold below).
+static constexpr float  k_LerpAlpha  = 0.5f;
+static constexpr float  k_SnapDistSq = 25.0f; // 5 units – snap, don't lerp
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 static inline void actor_cache(void* inst) {
     if (!inst) return;
@@ -89,9 +103,6 @@ static inline void actor_cache(void* inst) {
     g_actorPtrMap[id] = inst;
 }
 
-// When actor goes OOS: register it and capture current ActorLinker.position as
-// the dead-reckoning baseline so the SGW display-buffer read or dead-reckoning
-// always starts from a fresh, accurate position.
 static inline void oos_insert(void* inst) {
     if (!inst) return;
     uint32_t id = *(uint32_t*)((uint64_t)inst + 0x4F4);
@@ -101,19 +112,15 @@ static inline void oos_insert(void* inst) {
     g_oosSet.insert(id);
     g_actorPtrMap[id] = inst;
 
-    // Snapshot the exact ActorLinker.position at the OOS transition.  This is
-    // the most accurate baseline we have – it comes directly from the last
-    // server-side position update, not from potentially-stale NtfActorMovementData.
-    float* lpos = (float*)((uint64_t)inst + 0x50C); // ActorLinker.position
+    // Capture exact ActorLinker.position at OOS transition as dead-reckon baseline
+    float* lpos = (float*)((uint64_t)inst + 0x50C);
     OOSData& d = g_oosMap[id];
     d.pos[0] = lpos[0]; d.pos[1] = lpos[1]; d.pos[2] = lpos[2];
 
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
     uint64_t nowNs = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-    // Only reset timestamp if we don't already have fresh movement data
-    if (d.lastNs == 0 || nowNs - d.lastNs > 2000000000ULL) {
+    if (d.lastNs == 0 || nowNs - d.lastNs > 2000000000ULL)
         d.lastNs = nowNs;
-    }
 }
 
 static inline void oos_remove(uint32_t id) {
@@ -223,83 +230,31 @@ static void new_NtfActorMoveState(uint32_t actorID, bool isMoving) {
 }
 
 // =============================================================================
-// Shared: sync OOS actor myTransform from ActorLinker.position or dead-reckon.
-// Called from BOTH Interpolation and HOK_OnInterpolation hooks.
-// This is the FALLBACK path – Layer 8 (SGW buffer) is preferred.
-// =============================================================================
-static inline void sync_oos_transform(void* inst) {
-    if (!maphack || !inst) return;
-    uint32_t objID = *(uint32_t*)((uint64_t)inst + 0x4F4);
-    if (!objID) return;
-    if (!g_oosMtx.try_lock()) return;
-    bool isOOS = g_oosSet.count(objID) > 0;
-    if (!isOOS) { g_oosMtx.unlock(); return; }
-
-    void* myTransform = *(void**)((uint64_t)inst + 0x740);
-    if (!myTransform || !_TransformSetPosInj) { g_oosMtx.unlock(); return; }
-
-    float writePos[3];
-    float* lpos = (float*)((uint64_t)inst + 0x50C); // ActorLinker.position
-
-    auto it = g_oosMap.find(objID);
-    if (it != g_oosMap.end() && it->second.lastNs > 0) {
-        OOSData d = it->second;
-        g_oosMtx.unlock();
-
-        float ddx = lpos[0]-d.pos[0], ddz = lpos[2]-d.pos[2];
-        if ((ddx*ddx + ddz*ddz) > 1.0f) {
-            // SGW advanced ActorLinker.position → use it directly
-            writePos[0]=lpos[0]; writePos[1]=lpos[1]; writePos[2]=lpos[2];
-        } else {
-            // Both frozen → dead-reckon from last cached packet
-            writePos[0]=d.pos[0]; writePos[1]=d.pos[1]; writePos[2]=d.pos[2];
-            if (d.isMoving && d.speed > 0.05f) {
-                float fm = sqrtf(d.fwd[0]*d.fwd[0]+d.fwd[1]*d.fwd[1]+d.fwd[2]*d.fwd[2]);
-                if (fm > 0.5f && fm < 2.0f) {
-                    struct timespec ts2; clock_gettime(CLOCK_MONOTONIC, &ts2);
-                    float dt = ((uint64_t)ts2.tv_sec*1000000000ULL+(uint64_t)ts2.tv_nsec - d.lastNs) / 1e9f;
-                    if (dt > 0.0f && dt < k_DRCapSec) {
-                        writePos[0] += (d.fwd[0]/fm)*d.speed*dt;
-                        writePos[1] += (d.fwd[1]/fm)*d.speed*dt;
-                        writePos[2] += (d.fwd[2]/fm)*d.speed*dt;
-                    }
-                }
-            }
-        }
-    } else {
-        g_oosMtx.unlock();
-        writePos[0]=lpos[0]; writePos[1]=lpos[1]; writePos[2]=lpos[2];
-    }
-    _TransformSetPosInj(myTransform, writePos);
-}
-
-// =============================================================================
-// LAYER 4c – Interpolation(): Unity render-loop path
-// Called by ActorManager::Interpolation() for actors still in its lists.
-// After Layer 7 skips OnActorLeaveView, OOS actors remain in those lists.
+// LAYER 4c – ActorLinker::Interpolation(): PASS-THROUGH
+// DO NOT write to myTransform here – Layer 8 is the sole OOS position driver.
+// Calling the original is still important for non-position work (animations,
+// HUD, bone sync, etc.) so we never skip it.
 // =============================================================================
 static void (*_Interpolation)(void* inst) = nullptr;
 static void new_Interpolation(void* inst) {
     if (_Interpolation) _Interpolation(inst);
-    sync_oos_transform(inst);
+    // OOS position is handled by Layer 8 (ActorMgrInterpolation).
+    // No sync_oos_transform here – that was causing jitter by fighting with Layer 8.
 }
 
 // =============================================================================
-// LAYER 4d – HOK_OnInterpolation(): SGW engine path
-// Called by the SGW/HOKExtend system for EVERY actor regardless of ActorManager
-// list membership.  This fires even before Layer 7's fix is confirmed working.
+// LAYER 4d – HOK_OnInterpolation(): PASS-THROUGH
+// HOK fires AFTER ActorManager::Interpolation().  Writing dead-reckoned
+// positions here would overwrite Layer 8's fresh SGW positions every frame.
 // =============================================================================
 static void (*_HOKOnInterpolation)(void* inst) = nullptr;
 static void new_HOKOnInterpolation(void* inst) {
     if (_HOKOnInterpolation) _HOKOnInterpolation(inst);
-    sync_oos_transform(inst);
+    // OOS position handled by Layer 8 – no sync here.
 }
 
 // =============================================================================
 // LAYER 5 – HP sync for OOS actors
-// SGC::OnActorCurHpChange(uint32 objID, int32 curHp, int32 totalHp) is fired
-// by the local SGW simulation for every HP change.  The C# handler checks
-// _logicVisible and skips OOS actors; we bypass via cached ActorLinker*.
 // =============================================================================
 static void (*_OnActorCurHpChange)(uint32_t objID, int32_t curHp, int32_t totalHp) = nullptr;
 static void new_OnActorCurHpChange(uint32_t objID, int32_t curHp, int32_t totalHp) {
@@ -314,7 +269,7 @@ static void new_OnActorCurHpChange(uint32_t objID, int32_t curHp, int32_t totalH
     }
     g_oosMtx.unlock();
     if (!isOOS || !actor || !_SetActorHp) return;
-    void* vc = *(void**)((uint64_t)actor + 0x400); // ValueLinkerComponent*
+    void* vc = *(void**)((uint64_t)actor + 0x400);
     if (vc) _SetActorHp(vc, curHp, totalHp);
 }
 
@@ -325,66 +280,41 @@ static void (*_OnActorLeaveViewUnregEvt)(uint32_t actorID) = nullptr;
 static void new_OnActorLeaveViewUnregEvt(uint32_t actorID) {
     if (!maphack)
         if (_OnActorLeaveViewUnregEvt) _OnActorLeaveViewUnregEvt(actorID);
-    // skipped when maphack: keeps all C# event subscriptions alive
 }
 
 // =============================================================================
-// LAYER 7 – Skip ActorManager::OnActorLeaveView (instance method)
-//
-// DIAGNOSIS (confirmed by training-camp observation):
-//   SGC::OnActorLeaveView does TWO things in sequence:
-//     1. actor.SetVisible(false, false)        ← Layer-2 hook intercepts ✓
-//     2. ActorManager.OnActorLeaveView(id,seq) ← removes actor from HeroActors/etc.
-//
-//   Previous Layer 7 skipped SGC::OnActorLeaveView entirely which also skipped
-//   step 1 → actor.SetVisible(false) never called → g_oosSet never populated →
-//   sync_oos_transform() returned immediately for every actor → no fix at all.
-//
-// Correct fix: let SGC::OnActorLeaveView run normally (so SetVisible(false)
-// fires → Layer 2 catches it → g_oosSet populated), but skip only the inner
-// ActorManager::OnActorLeaveView call so the actor stays in HeroActors/etc.
-// render lists → ActorManager::Interpolation() still iterates it every frame →
-// Layer 4c fires → sync_oos_transform() runs → position updated.
-//
-// ActorManager::OnActorLeaveView is an INSTANCE method, so native signature is:
-//   void fn(void* actorMgrInst, uint32_t actorID, uint32_t objSeq)
+// LAYER 7 – Skip ActorManager::OnActorLeaveView
+// Keeps actor in HeroActors/SoldierActors so Interpolation() still iterates it.
 // =============================================================================
 static void (*_ActorMgrLeaveView)(void* inst, uint32_t actorID, uint32_t objSeq) = nullptr;
 static void new_ActorMgrLeaveView(void* inst, uint32_t actorID, uint32_t objSeq) {
-    if (maphack) return; // skip — actor stays in ActorManager render/logic lists
+    if (maphack) return;
     if (_ActorMgrLeaveView) _ActorMgrLeaveView(inst, actorID, objSeq);
 }
 
 // =============================================================================
-// LAYER 8 – SGW display-buffer bridge (ActorManager::Interpolation + GetDisplayData)
+// LAYER 8 – SGW display-buffer + dead-reckoning (sole OOS position driver)
 //
-// The SGW C++ simulation runs a full deterministic physics step for ALL actors
-// every frame, regardless of the C# visibility layer.  The results are written
-// to an internal ring buffer exposed via:
-//   SGW.GetDisplayData()       → DisplayInfoData* (array start)
-//   SGW.GetDisplayData_Count() → uint32 (element count)
+// Called from new_ActorMgrInterpolation BEFORE the original so that
+// ActorLinker.position is already fresh when game's Interpolation() runs.
+// Then after the original we do a second pass for actors not yet updated
+// (safety net – usually empty).
 //
-// In training/boot-camp mode the server sends movement packets for ALL actors
-// so the SGW buffer is always fresh.  In a normal PvP match the buffer entries
-// for OOS actors are updated by the LOCAL simulation engine based on the last
-// known AI/movement command, so they still advance even when the server has
-// stopped sending NtfActorMovementData for those actors.
-//
-// We hook ActorManager::Interpolation() (the per-frame coordinator) and, after
-// the original call finishes updating all visible actors, we scan the SGW buffer
-// for OOS actors and force-write their positions directly into the Unity Transform.
-//
-// If the SGW buffer turns out not to contain live OOS data (e.g. server-mode
-// lock-step where the client simulation halts for unseen actors), the fallback
-// dead-reckoning in sync_oos_transform() handles those actors via Layers 4c/4d.
+// Smoothing strategy:
+//   • If |delta| > k_SnapDistSq  → snap immediately (fresh spawn / large jump)
+//   • Otherwise                  → lerp with alpha k_LerpAlpha per frame
+//     This suppresses 30Hz physics-step snapping that would otherwise be
+//     visible at 60fps.
 // =============================================================================
-static inline void sync_oos_from_sgw_buffer() {
+static inline void sync_oos_from_sgw_buffer(bool postPass) {
     if (!maphack || !_TransformSetPosInj) return;
-    if (!_SGWGetDisplayData || !_SGWGetDisplayDataCount) return;
 
-    uint8_t* buf = (uint8_t*)_SGWGetDisplayData();
-    uint32_t cnt = _SGWGetDisplayDataCount();
-    if (!buf || !cnt) return;
+    uint8_t* buf = nullptr;
+    uint32_t cnt = 0;
+    if (_SGWGetDisplayData && _SGWGetDisplayDataCount) {
+        buf = (uint8_t*)_SGWGetDisplayData();
+        cnt = _SGWGetDisplayDataCount();
+    }
 
     if (!g_oosMtx.try_lock()) return;
     if (g_oosSet.empty()) { g_oosMtx.unlock(); return; }
@@ -392,63 +322,133 @@ static inline void sync_oos_from_sgw_buffer() {
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
     uint64_t nowNs = (uint64_t)ts.tv_sec*1000000000ULL + (uint64_t)ts.tv_nsec;
 
-    for (uint32_t i = 0; i < cnt; i++) {
-        uint8_t* e  = buf + (uint64_t)i * k_DispStride;
-        uint32_t id = *(uint32_t*)(e + k_DispIDOff);
-        if (!id) continue;
-        if (!g_oosSet.count(id)) continue;
+    // Track which OOS actors we handle from the SGW buffer (pre-pass only)
+    // so the dead-reckoning fallback only fires for those not in the buffer.
+    static std::unordered_set<uint32_t> s_handled;
+    if (!postPass) s_handled.clear();
 
-        auto it = g_actorPtrMap.find(id);
-        if (it == g_actorPtrMap.end() || !it->second) continue;
-        void* actor = it->second;
+    // ── A: SGW buffer pass ────────────────────────────────────────────────────
+    if (buf && cnt && !postPass) {
+        for (uint32_t i = 0; i < cnt; i++) {
+            uint8_t* e  = buf + (uint64_t)i * k_DispStride;
+            uint32_t id = *(uint32_t*)(e + k_DispIDOff);
+            if (!id || !g_oosSet.count(id)) continue;
+
+            auto it = g_actorPtrMap.find(id);
+            if (it == g_actorPtrMap.end() || !it->second) continue;
+            void* actor = it->second;
+
+            void* xform = *(void**)((uint64_t)actor + 0x740);
+            if (!xform) continue;
+
+            float* tgt = (float*)(e + k_DispPosOff);
+
+            // Sanity: reject NaN or impossibly far positions
+            if (tgt[0]!=tgt[0] || tgt[1]!=tgt[1] || tgt[2]!=tgt[2]) continue;
+            if (tgt[0]*tgt[0]+tgt[2]*tgt[2] > 1e8f) continue;
+
+            // Current smoothed position (from ActorLinker or our last write)
+            float* ap = (float*)((uint64_t)actor + 0x50C);
+            float dx=tgt[0]-ap[0], dy=tgt[1]-ap[1], dz=tgt[2]-ap[2];
+            float distSq = dx*dx+dy*dy+dz*dz;
+
+            float sp[3];
+            if (distSq > k_SnapDistSq) {
+                // Large jump → snap (new actor or teleport)
+                sp[0]=tgt[0]; sp[1]=tgt[1]; sp[2]=tgt[2];
+            } else {
+                // Small delta → smooth lerp to suppress physics-step jitter
+                sp[0]=ap[0]+k_LerpAlpha*dx;
+                sp[1]=ap[1]+k_LerpAlpha*dy;
+                sp[2]=ap[2]+k_LerpAlpha*dz;
+            }
+
+            // Write back to ActorLinker.position (input to game's Interpolation)
+            // and directly to Unity Transform (safety – in case game's Interpolation
+            // uses a different source for OOS actors).
+            ap[0]=sp[0]; ap[1]=sp[1]; ap[2]=sp[2];
+            _TransformSetPosInj(xform, sp);
+
+            // Refresh dead-reckoning cache so the fallback (below) starts accurate
+            auto oi = g_oosMap.find(id);
+            if (oi != g_oosMap.end()) {
+                float ddx=sp[0]-oi->second.pos[0], ddz=sp[2]-oi->second.pos[2];
+                float dist=sqrtf(ddx*ddx+ddz*ddz);
+                float dtSec=(nowNs-oi->second.lastNs)/1e9f;
+                if (dtSec>0.001f && dtSec<2.0f) {
+                    float spd=dist/dtSec;
+                    if (spd<20.0f) oi->second.speed=spd;
+                }
+                oi->second.isMoving=(dist>0.05f);
+                if (dist>0.01f && dist<20.0f) {
+                    float inv=1.0f/(dist>0.001f?dist:1.0f);
+                    oi->second.fwd[0]=ddx*inv;
+                    oi->second.fwd[1]=0.0f;
+                    oi->second.fwd[2]=ddz*inv;
+                }
+                oi->second.pos[0]=sp[0]; oi->second.pos[1]=sp[1]; oi->second.pos[2]=sp[2];
+                oi->second.lastNs=nowNs;
+            }
+
+            s_handled.insert(id);
+        }
+    }
+
+    // ── B: dead-reckoning fallback for OOS actors absent from SGW buffer ─────
+    // (Also the sole path when SGW buffer is unavailable or empty)
+    for (uint32_t id : g_oosSet) {
+        if (!postPass && s_handled.count(id)) continue; // already handled above
+
+        auto pit = g_actorPtrMap.find(id);
+        if (pit == g_actorPtrMap.end() || !pit->second) continue;
+        void* actor = pit->second;
 
         void* xform = *(void**)((uint64_t)actor + 0x740);
         if (!xform) continue;
 
-        float* pos = (float*)(e + k_DispPosOff);
-
-        // Guard against obviously bogus coordinates (NaN / Inf / far-off)
-        if (pos[0] != pos[0] || pos[1] != pos[1] || pos[2] != pos[2]) continue; // NaN
-        float magSq = pos[0]*pos[0] + pos[1]*pos[1] + pos[2]*pos[2];
-        if (magSq > 1e8f) continue; // >10000 units from origin → bogus
-
-        // Mirror position into ActorLinker.position so Interpolation() sees it
         float* ap = (float*)((uint64_t)actor + 0x50C);
-        ap[0]=pos[0]; ap[1]=pos[1]; ap[2]=pos[2];
 
-        // Force Unity Transform
-        _TransformSetPosInj(xform, pos);
-
-        // Keep the dead-reckoning cache current so Layer 4c/4d fallback stays
-        // calibrated if we stop getting SGW data for this actor.
         auto oi = g_oosMap.find(id);
-        if (oi != g_oosMap.end()) {
-            float dx = pos[0]-oi->second.pos[0];
-            float dz = pos[2]-oi->second.pos[2];
-            float dist = sqrtf(dx*dx+dz*dz);
-            float dtSec = (nowNs - oi->second.lastNs) / 1e9f;
-            if (dtSec > 0.001f && dtSec < 2.0f) {
-                float spd = dist / dtSec;
-                if (spd < 20.0f) oi->second.speed = spd;
+        float wp[3];
+        if (oi != g_oosMap.end() && oi->second.lastNs > 0) {
+            OOSData& d = oi->second;
+
+            // Dead-reckon from last known position + forward * speed * dt
+            wp[0]=d.pos[0]; wp[1]=d.pos[1]; wp[2]=d.pos[2];
+            if (d.isMoving && d.speed > 0.05f) {
+                float fm=sqrtf(d.fwd[0]*d.fwd[0]+d.fwd[1]*d.fwd[1]+d.fwd[2]*d.fwd[2]);
+                if (fm>0.5f && fm<2.0f) {
+                    float dt2=(nowNs-d.lastNs)/1e9f;
+                    if (dt2>0.0f && dt2<k_DRCapSec) {
+                        wp[0]+=(d.fwd[0]/fm)*d.speed*dt2;
+                        wp[1]+=(d.fwd[1]/fm)*d.speed*dt2;
+                        wp[2]+=(d.fwd[2]/fm)*d.speed*dt2;
+                    }
+                }
             }
-            oi->second.isMoving = (dist > 0.05f);
-            if (dist > 0.01f && dist < 20.0f) {
-                float inv = 1.0f / (dist > 0.001f ? dist : 1.0f);
-                oi->second.fwd[0] = dx*inv;
-                oi->second.fwd[1] = 0.0f;
-                oi->second.fwd[2] = dz*inv;
-            }
-            oi->second.pos[0]=pos[0]; oi->second.pos[1]=pos[1]; oi->second.pos[2]=pos[2];
-            oi->second.lastNs=nowNs;
+        } else {
+            wp[0]=ap[0]; wp[1]=ap[1]; wp[2]=ap[2];
         }
+
+        ap[0]=wp[0]; ap[1]=wp[1]; ap[2]=wp[2];
+        _TransformSetPosInj(xform, wp);
     }
+
     g_oosMtx.unlock();
 }
 
-// Hook on ActorManager::Interpolation() – instance method, native sig:
-//   void fn(void* actorMgrInst)
+// Hook on ActorManager::Interpolation() – instance method (void* inst)
+// Pre-pass: update ActorLinker.position so game's own Interpolation() reads
+// fresh data when it runs for OOS actors still in its lists.
+// Post-pass: force-update Transform for actors not reached by game's path.
 static void (*_ActorMgrInterpolation)(void* inst) = nullptr;
 static void new_ActorMgrInterpolation(void* inst) {
+    // Pre-pass: populate ActorLinker.position and myTransform before game iterates
+    sync_oos_from_sgw_buffer(false);
+
     if (_ActorMgrInterpolation) _ActorMgrInterpolation(inst);
-    sync_oos_from_sgw_buffer();
+
+    // Post-pass: any OOS actor whose Transform was overwritten by the game's
+    // stale-position Interpolation() gets corrected here.
+    sync_oos_from_sgw_buffer(true);
 }
