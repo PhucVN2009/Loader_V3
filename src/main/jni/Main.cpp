@@ -133,28 +133,47 @@ void SetupImgui() {
   ImGui_ImplAndroid_Init(nullptr);
   ImGuiIO& io = ImGui::GetIO();
   
-  SetYetAnotherDarkTheme(); //Theme
+  SetYetAnotherDarkTheme(); // Base theme; refined below for the touch-first menu.
   
   ImGuiStyle *style = &ImGui::GetStyle();
-  ImGui::GetStyle().WindowTitleAlign = ImVec2(0.5f, 0.5f);
-  ImGui::GetStyle().FrameBorderSize = 1.5f;
-  ImGui::GetStyle().ScrollbarSize = 50.0f;
-  ImGui::GetStyle().GrabMinSize = 20.0f;
-  ImGui::GetStyle().FrameRounding = 8;
-  ImGui::GetStyle().ScrollbarRounding = 12;
+  style->WindowTitleAlign = ImVec2(0.5f, 0.5f);
+  style->WindowPadding = ImVec2(16.0f, 16.0f);
+  style->FramePadding = ImVec2(14.0f, 10.0f);
+  style->ItemSpacing = ImVec2(10.0f, 12.0f);
+  style->ItemInnerSpacing = ImVec2(10.0f, 8.0f);
+  style->FrameBorderSize = 0.0f;
+  style->WindowBorderSize = 1.0f;
+  style->ChildBorderSize = 1.0f;
+  style->PopupBorderSize = 1.0f;
+  style->ScrollbarSize = 18.0f;
+  style->GrabMinSize = 18.0f;
+  style->WindowRounding = 18.0f;
+  style->ChildRounding = 14.0f;
+  style->FrameRounding = 10.0f;
+  style->PopupRounding = 10.0f;
+  style->ScrollbarRounding = 10.0f;
+  style->GrabRounding = 10.0f;
 
-  ImGui::GetStyle().PopupRounding = 3;
-  ImGui::GetStyle().WindowPadding = ImVec2(4, 4);
-  ImGui::GetStyle().FramePadding = ImVec2(2, 2);
-  ImGui::GetStyle().ItemSpacing = ImVec2(3, 3);
-
-  ImGui::GetStyle().WindowBorderSize = 4;
-  ImGui::GetStyle().ChildBorderSize = 1;
-  ImGui::GetStyle().PopupBorderSize = 1;
-
-  ImGui::GetStyle().WindowRounding = 3;
-  ImGui::GetStyle().ChildRounding = 3;
-  ImGui::GetStyle().GrabRounding = 3;
+  ImVec4* colors = style->Colors;
+  colors[ImGuiCol_Text] = ImVec4(0.93f, 0.95f, 1.00f, 1.00f);
+  colors[ImGuiCol_TextDisabled] = ImVec4(0.48f, 0.52f, 0.64f, 1.00f);
+  colors[ImGuiCol_WindowBg] = ImVec4(0.035f, 0.043f, 0.075f, 0.98f);
+  colors[ImGuiCol_ChildBg] = ImVec4(0.065f, 0.075f, 0.12f, 0.94f);
+  colors[ImGuiCol_PopupBg] = ImVec4(0.055f, 0.065f, 0.105f, 0.98f);
+  colors[ImGuiCol_Border] = ImVec4(0.25f, 0.28f, 0.43f, 0.55f);
+  colors[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.11f, 0.18f, 1.00f);
+  colors[ImGuiCol_FrameBgHovered] = ImVec4(0.17f, 0.16f, 0.29f, 1.00f);
+  colors[ImGuiCol_FrameBgActive] = ImVec4(0.23f, 0.20f, 0.42f, 1.00f);
+  colors[ImGuiCol_CheckMark] = ImVec4(0.62f, 0.45f, 1.00f, 1.00f);
+  colors[ImGuiCol_SliderGrab] = ImVec4(0.49f, 0.72f, 1.00f, 1.00f);
+  colors[ImGuiCol_SliderGrabActive] = ImVec4(0.68f, 0.50f, 1.00f, 1.00f);
+  colors[ImGuiCol_Button] = ImVec4(0.11f, 0.12f, 0.20f, 1.00f);
+  colors[ImGuiCol_ButtonHovered] = ImVec4(0.24f, 0.20f, 0.42f, 1.00f);
+  colors[ImGuiCol_ButtonActive] = ImVec4(0.33f, 0.25f, 0.56f, 1.00f);
+  colors[ImGuiCol_Header] = ImVec4(0.19f, 0.17f, 0.32f, 1.00f);
+  colors[ImGuiCol_HeaderHovered] = ImVec4(0.27f, 0.22f, 0.47f, 1.00f);
+  colors[ImGuiCol_HeaderActive] = ImVec4(0.36f, 0.27f, 0.62f, 1.00f);
+  colors[ImGuiCol_Separator] = ImVec4(0.23f, 0.25f, 0.38f, 0.65f);
 
   ImGui_ImplOpenGL3_Init("#version 100");
   io.IniFilename = nullptr;
@@ -162,7 +181,7 @@ void SetupImgui() {
   // ---------------- Fonts ----------------
   // 1. Main font: Roboto (supports Cyrillic)
   ImFontConfig font_cfg;
-  font_cfg.SizePixels = 40.0f;
+  font_cfg.SizePixels = 32.0f;
   static const ImWchar ranges[] = {
     0x0020,
     0x00FF,
@@ -175,7 +194,7 @@ void SetupImgui() {
     // Cyrillic
     0
   };
-  ImFont* mainFont = io.Fonts->AddFontFromMemoryTTF(Roboto_Regular, sizeof(Roboto_Regular), 40.0f, &font_cfg, ranges);
+  ImFont* mainFont = io.Fonts->AddFontFromMemoryTTF(Roboto_Regular, sizeof(Roboto_Regular), 32.0f, &font_cfg, ranges);
 
   // 2. Font Awesome icons (merged into main font, separate size)
   ImFontConfig icons_config;
@@ -188,14 +207,14 @@ void SetupImgui() {
     ICON_MAX_FA,
     0
   };
-  io.Fonts->AddFontFromMemoryCompressedTTF(font_awesome_data, font_awesome_size, 40.0f, &icons_config, icons_ranges);
+  io.Fonts->AddFontFromMemoryCompressedTTF(font_awesome_data, font_awesome_size, 32.0f, &icons_config, icons_ranges);
 
   // 3. Optional Custom font (merged)
   if (Custom != nullptr) {
     ImFontConfig custom_cfg;
     custom_cfg.MergeMode = true;
     custom_cfg.PixelSnapH = true;
-    io.Fonts->AddFontFromMemoryTTF(const_cast<std::uint8_t*>(Custom), sizeof(Custom), 40.0f, &custom_cfg, nullptr);
+    io.Fonts->AddFontFromMemoryTTF(const_cast<std::uint8_t*>(Custom), sizeof(Custom), 32.0f, &custom_cfg, nullptr);
   }
 }
 
@@ -372,193 +391,232 @@ time_t GetExpiryTimestamp(const char* expiry_date_str) {
 static bool g_ShowMenu = false;
 
 void DrawLogo() {
-  if (!ImGuiOK) return;
-  float hue = fmodf(ImGui::GetTime() * 0.1f, 1.0f);
-  ImVec4 rainbow = HSVtoRGB(hue, 1.0f, 1.0f);
-  
-  static time_t expiry_timestamp = GetExpiryTimestamp("28-10-35"); // Add your Expiry date here. (Date/Month/year)
-  time_t now = time(nullptr);
-  ImVec2 window_size = ImGui::GetIO().DisplaySize;
+    if (!ImGuiOK) return;
 
-  // If expired, show expiry message centered and skip rest of menu
-  if (now > expiry_timestamp && expiry_timestamp != 0) {
-    ImGui::SetNextWindowBgAlpha(0.75f);
-    ImGui::SetNextWindowPos(ImVec2(window_size.x / 2, window_size.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::Begin("EXPIRED", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove);
-	ImGui::PushStyleColor(ImGuiCol_Text, rainbow);
-    ImGui::Text("- Note : ModMenu is expired -");
-    ImGui::End();
-	ImGui::PopStyleColor(1);
-    return; // Prevent drawing the rest of the menu when expired
-  }
-
-  ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
-
-  ImGuiWindowFlags flags = ImGuiWindowFlags_NoSavedSettings |
-  ImGuiWindowFlags_AlwaysAutoResize |
-  ImGuiWindowFlags_NoTitleBar |
-  ImGuiWindowFlags_NoBackground;
-  
-  ImGui::Begin("Logo", nullptr, flags);
-
-  float size = 100.0f;
-  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, size * 0.5f);
-  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 10));
-
-  // === Glass effect background (fake blur with alpha rect) ===
-  ImVec2 pos = ImGui::GetCursorScreenPos();
-  ImVec2 rect = ImVec2(pos.x + size, pos.y + size);
-  ImDrawList* draw_list = ImGui::GetWindowDrawList();
-  draw_list->AddRectFilled(pos, rect, IM_COL32(255, 255, 255, 60), size * 0.5f); // frosted background
-
-  // === Transparent button colors ===
-  ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 1.0f, 1.0f, 0.25f));
-  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.35f));
-  ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.45f));
-
-  // === Animated text color (rainbow effect) ===
-  hue += ImGui::GetIO().DeltaTime * 0.3f; // Speed of color change
-  if (hue > 1.0f) hue -= 1.0f;
-
-  ImVec4 textColor = ImColor::HSV(hue, 0.8f, 1.0f); // HSV to RGB conversion
-  ImGui::PushStyleColor(ImGuiCol_Text, textColor);
-
-  ImGui::Button(ICON_FA_POWER_OFF, ImVec2(size, size));
-
-  static bool dragging = false;
-
-  if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    dragging = true;
-    ImVec2 delta = ImGui::GetIO().MouseDelta;
-    ImVec2 wpos = ImGui::GetWindowPos();
-    ImGui::SetWindowPos(ImVec2(wpos.x + delta.x, wpos.y + delta.y));
-  }
-
-  if (ImGui::IsItemDeactivated()) {
-    if (!dragging && ImGui::IsItemHovered()) {
-      g_ShowMenu = !g_ShowMenu;
+    static time_t expiry_timestamp = GetExpiryTimestamp("28-10-35");
+    const time_t now = time(nullptr);
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    if (now > expiry_timestamp && expiry_timestamp != 0) {
+        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowBgAlpha(0.96f);
+        ImGui::Begin("##expired", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove);
+        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.42f, 1.0f), ICON_FA_TIMES_CIRCLE "  Menu expired");
+        ImGui::TextDisabled("Please install a current build.");
+        ImGui::End();
+        return;
     }
-    dragging = false;
-  }
 
-  ImGui::PopStyleColor(4);
-  ImGui::PopStyleVar(2);
-  ImGui::End();
+    ImGui::SetNextWindowPos(ImVec2(48.0f, display.y * 0.35f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(82.0f, 82.0f), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(5, 5));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 24.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.045f, 0.055f, 0.10f, 0.96f));
+    ImGui::Begin("##launcher", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 20.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.24f, 0.70f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.47f, 0.34f, 0.88f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.25f, 0.66f, 0.98f, 1.0f));
+    ImGui::Button(g_ShowMenu ? ICON_FA_TIMES : ICON_FA_CROWN, ImVec2(72, 72));
+
+    static bool dragging = false;
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 8.0f)) {
+        dragging = true;
+        const ImVec2 p = ImGui::GetWindowPos();
+        const ImVec2 d = ImGui::GetIO().MouseDelta;
+        ImGui::SetWindowPos(ImVec2(p.x + d.x, p.y + d.y));
+    }
+    if (ImGui::IsItemDeactivated()) {
+        if (!dragging && ImGui::IsItemHovered()) g_ShowMenu = !g_ShowMenu;
+        dragging = false;
+    }
+
+    ImGui::PopStyleColor(3);
+    ImGui::PopStyleVar();
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 }
 
 inline ImVec2 operator*(const ImVec2& v, float s) {
-  return ImVec2(v.x * s, v.y * s);
+    return ImVec2(v.x * s, v.y * s);
 }
 
+static bool MenuTab(const char* icon, const char* label, bool selected) {
+    ImGui::PushID(label);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 11.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImVec4(0.34f, 0.24f, 0.68f, 1.0f) : ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.19f, 0.18f, 0.34f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, selected ? ImVec4(1, 1, 1, 1) : ImVec4(0.58f, 0.62f, 0.74f, 1));
+    char caption[96];
+    snprintf(caption, sizeof(caption), "%s   %s", icon, label);
+    const bool pressed = ImGui::Button(caption, ImVec2(-1, 58));
+    if (selected) {
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        ImVec2 min = ImGui::GetItemRectMin();
+        ImVec2 max = ImGui::GetItemRectMax();
+        draw->AddRectFilled(ImVec2(min.x, min.y + 12), ImVec2(min.x + 4, max.y - 12), IM_COL32(120, 196, 255, 255), 2.0f);
+    }
+    ImGui::PopStyleColor(3);
+    ImGui::PopStyleVar();
+    ImGui::PopID();
+    return pressed;
+}
+
+static bool ToggleSwitch(const char* id, bool* value) {
+    const float height = 34.0f;
+    const float width = 64.0f;
+    ImGui::InvisibleButton(id, ImVec2(width, height));
+    if (ImGui::IsItemClicked()) *value = !*value;
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImU32 bg = *value ? IM_COL32(112, 78, 230, 255) : IM_COL32(55, 59, 78, 255);
+    draw->AddRectFilled(min, max, bg, height * 0.5f);
+    const float x = *value ? max.x - height * 0.5f : min.x + height * 0.5f;
+    draw->AddCircleFilled(ImVec2(x, min.y + height * 0.5f), 13.0f, IM_COL32(245, 247, 255, 255));
+    return ImGui::IsItemClicked();
+}
+
+static void SectionTitle(const char* icon, const char* title, const char* description) {
+    ImGui::TextColored(ImVec4(0.62f, 0.48f, 1.0f, 1.0f), "%s  %s", icon, title);
+    ImGui::TextDisabled("%s", description);
+    ImGui::Spacing();
+}
+
+static void DeviceInfoRow(const char* icon, const char* label, const char* property) {
+    ImGui::TextColored(ImVec4(0.48f, 0.68f, 1.0f, 1.0f), "%s", icon);
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", label);
+    ImGui::SameLine(245.0f);
+    ImGui::Text("%s", GetProp(property).c_str());
+    ImGui::Separator();
+}
+
+static void StatCard(const char* id, const char* icon, const char* value, const char* label, const ImVec4& accent) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.075f, 0.085f, 0.14f, 0.94f));
+    ImGui::BeginChild(id, ImVec2(0, 112), true);
+    ImGui::TextColored(accent, "%s", icon);
+    ImGui::SameLine();
+    ImGui::Text("%s", value);
+    ImGui::TextDisabled("%s", label);
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
 
 void DrawMenu() {
-    static int activeFeature = 0;
-
+    static int activeTab = 0;
     if (!g_ShowMenu) return;
 
-    const ImVec2 window_size = ImVec2(600, 600);
-    ImVec2 center = ImGui::GetIO().DisplaySize * 0.5f;
-    ImVec2 pos = ImVec2(center.x - window_size.x * 0.5f, center.y - window_size.y * 0.5f);
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const ImVec2 menuSize(ImMin(1000.0f, display.x - 32.0f), ImMin(650.0f, display.y - 32.0f));
+    ImGui::SetNextWindowPos(display * 0.5f, ImGuiCond_Once, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(menuSize, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::Begin("##aov_control_center", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
 
-    ImGui::SetNextWindowPos(pos, ImGuiCond_Once);
-    ImGui::SetNextWindowSize(window_size, ImGuiCond_Once);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 windowPos = ImGui::GetWindowPos();
+    const ImVec2 windowMax = windowPos + menuSize;
+    draw->AddRectFilledMultiColor(windowPos, windowMax, IM_COL32(13, 15, 29, 255), IM_COL32(23, 18, 46, 255),
+                                  IM_COL32(10, 20, 35, 255), IM_COL32(10, 13, 26, 255));
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
-                             ImGuiWindowFlags_NoCollapse |
-                             ImGuiWindowFlags_NoBringToFrontOnFocus;
-
-    ImGui::Begin("IMGUI MODMENU", nullptr, flags);
-
-    float screenHeight = ImGui::GetIO().DisplaySize.y;
-    if (screenHeight > 720)
-        BackGroundDots(250);
-    else
-        BackGroundDots(125);
-
-    ImGui::SetCursorPos(ImVec2(20, 15));
-    float hue = fmodf(ImGui::GetTime() * 0.1f, 1.0f);
-    ImVec4 rainbow = HSVtoRGB(hue, 1.0f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Separator, rainbow);
-    ImGui::PushStyleColor(ImGuiCol_CheckMark, rainbow);
-    ImGui::TextColored(rainbow, ICON_FA_SUN " VIP MODMENU BY - YOUR NAME -");
-    ImGui::PopStyleColor();
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    float padding = 15.0f;
-    float totalPadding = padding * 3;
-    float buttonWidth = (window_size.x - totalPadding) / 2.0f;
-    float buttonHeight = 65.0f;
-
-    ImGui::SetCursorPosX(padding);
-    ImGui::PushID(1);
-    if (ImGui::Button(ICON_FA_HOME, ImVec2(buttonWidth, buttonHeight))) {
-        activeFeature = 0;
-    }
-    ImGui::PopID();
-
+    const float sidebarWidth = 245.0f;
+    ImGui::SetCursorPos(ImVec2(0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.035f, 0.04f, 0.075f, 0.97f));
+    ImGui::BeginChild("##sidebar", ImVec2(sidebarWidth, menuSize.y), false);
+    ImGui::SetCursorPos(ImVec2(22, 24));
+    ImGui::TextColored(ImVec4(0.67f, 0.49f, 1.0f, 1.0f), ICON_FA_CROWN);
     ImGui::SameLine();
-    ImGui::SetCursorPosX(padding * 2 + buttonWidth);
-    ImGui::PushID(2);
-    if (ImGui::Button(ICON_FA_DATABASE, ImVec2(buttonWidth, buttonHeight))) {
-        activeFeature = 1;
-    }
-    ImGui::PopID();
+    ImGui::Text("AOV  TOOL");
+    ImGui::SetCursorPosX(22);
+    ImGui::TextDisabled("CONTROL CENTER  /  V3");
+    ImGui::SetCursorPos(ImVec2(16, 112));
+    ImGui::BeginGroup();
+    if (MenuTab(ICON_FA_TACHOMETER_ALT, "Dashboard", activeTab == 0)) activeTab = 0;
+    if (MenuTab(ICON_FA_TSHIRT, "Skin changer", activeTab == 1)) activeTab = 1;
+    if (MenuTab(ICON_FA_MOBILE_ALT, "Device", activeTab == 2)) activeTab = 2;
+    ImGui::EndGroup();
 
-    ImGui::Spacing();
+    ImGui::SetCursorPos(ImVec2(20, menuSize.y - 100));
     ImGui::Separator();
-    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.30f, 0.88f, 0.63f, 1.0f), ICON_FA_WIFI "  CONNECTED");
+    ImGui::TextDisabled(ICON_FA_SHIELD_ALT "  Protected session");
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
 
-    if (activeFeature == 0) {
-        ImGui::Checkbox("Set Skin", &SkinHack);
-        ImGui::SliderInt("ID", &skinID, 1, 49);
-       
-        
-    } 
-    else if (activeFeature == 1) {
-        ImGui::Columns(2, "deviceInfo", false);
+    ImGui::SetCursorPos(ImVec2(sidebarWidth, 0));
+    ImGui::BeginChild("##main", ImVec2(menuSize.x - sidebarWidth, menuSize.y), false);
+    ImGui::SetCursorPos(ImVec2(28, 22));
+    ImGui::BeginGroup();
+    const char* titles[] = {"Dashboard", "Skin Changer", "Device Information"};
+    const char* subtitles[] = {"Overview and quick access", "Manage your in-game appearance", "System and hardware details"};
+    ImGui::Text("%s", titles[activeTab]);
+    ImGui::TextDisabled("%s", subtitles[activeTab]);
+    ImGui::EndGroup();
+    ImGui::SameLine(menuSize.x - sidebarWidth - 88.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.16f, 0.24f, 1.0f));
+    if (ImGui::Button(ICON_FA_TIMES, ImVec2(54, 54))) g_ShowMenu = false;
+    ImGui::PopStyleColor();
+    ImGui::SetCursorPos(ImVec2(28, 94));
+    ImGui::Separator();
+    ImGui::SetCursorPos(ImVec2(28, 118));
 
-        ImGui::TextColored(ImColor(255, 200, 0), "Device Name:");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImColor(0, 255, 255), "%s", GetProp("ro.product.device").c_str());
-        ImGui::NextColumn();
-
-        ImGui::TextColored(ImColor(255, 200, 0), "Model:");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImColor(0, 255, 255), "%s", GetProp("ro.product.model").c_str());
-        ImGui::NextColumn();
-
-        ImGui::TextColored(ImColor(255, 200, 0), "Manufacturer:");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImColor(0, 255, 255), "%s", GetProp("ro.product.manufacturer").c_str());
-        ImGui::NextColumn();
-
-        ImGui::TextColored(ImColor(255, 200, 0), "Android Version:");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImColor(0, 255, 255), "%s", GetProp("ro.build.version.release").c_str());
-        ImGui::NextColumn();
-
-        ImGui::TextColored(ImColor(255, 200, 0), "SDK Version:");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImColor(0, 255, 255), "%s", GetProp("ro.build.version.sdk").c_str());
-        ImGui::NextColumn();
-
-        ImGui::TextColored(ImColor(255, 200, 0), "CPU ABI:");
-        ImGui::NextColumn();
-        ImGui::TextColored(ImColor(0, 255, 255), "%s", GetProp("ro.product.cpu.abi").c_str());
-        ImGui::NextColumn();
-
-        ImGui::Columns(1);
+    const float contentWidth = menuSize.x - sidebarWidth - 56.0f;
+    if (activeTab == 0) {
+        SectionTitle(ICON_FA_LAYER_GROUP, "OVERVIEW", "Everything you need in one place.");
+        const float cardWidth = (contentWidth - 20.0f) / 3.0f;
+        ImGui::PushItemWidth(cardWidth);
+        ImGui::BeginChild("##stat1wrap", ImVec2(cardWidth, 112), false); StatCard("##stat1", ICON_FA_TSHIRT, SkinHack ? "ACTIVE" : "OFF", "Skin override", ImVec4(0.65f, 0.48f, 1, 1)); ImGui::EndChild();
+        ImGui::SameLine(0, 10);
+        ImGui::BeginChild("##stat2wrap", ImVec2(cardWidth, 112), false); StatCard("##stat2", ICON_FA_PAINT_BRUSH, std::to_string(skinID).c_str(), "Selected skin ID", ImVec4(0.35f, 0.72f, 1, 1)); ImGui::EndChild();
+        ImGui::SameLine(0, 10);
+        ImGui::BeginChild("##stat3wrap", ImVec2(cardWidth, 112), false); StatCard("##stat3", ICON_FA_SIGNAL, "READY", "Service status", ImVec4(0.30f, 0.88f, 0.63f, 1)); ImGui::EndChild();
+        ImGui::PopItemWidth();
         ImGui::Spacing();
-        ImGui::Separator();
+        ImGui::BeginChild("##quick", ImVec2(contentWidth, 205), true);
+        SectionTitle(ICON_FA_BOLT, "QUICK CONTROL", "Turn the skin override on or off instantly.");
+        ImGui::Text("Skin override");
+        ImGui::TextDisabled("Apply the selected skin identifier");
+        ImGui::SameLine(contentWidth - 100.0f);
+        ToggleSwitch("##quickToggle", &SkinHack);
+        ImGui::EndChild();
+    } else if (activeTab == 1) {
+        ImGui::BeginChild("##skin_panel", ImVec2(contentWidth, 350), true);
+        SectionTitle(ICON_FA_MAGIC, "SKIN OVERRIDE", "Choose a skin and apply it without leaving the menu.");
+        ImGui::Text("Enable feature");
+        ImGui::TextDisabled("Override the default player skin");
+        ImGui::SameLine(contentWidth - 100.0f);
+        ToggleSwitch("##skinToggle", &SkinHack);
+        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+        ImGui::Text("Skin identifier");
+        ImGui::TextDisabled("Drag the slider to select an ID from 1 to 49");
         ImGui::Spacing();
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderInt("##skin_id", &skinID, 1, 49, "ID  %d");
+        ImGui::EndChild();
+        ImGui::Spacing();
+        ImGui::TextColored(SkinHack ? ImVec4(0.30f, 0.88f, 0.63f, 1) : ImVec4(0.58f, 0.62f, 0.74f, 1),
+                           SkinHack ? ICON_FA_CHECK_CIRCLE "  Override enabled and ready" : ICON_FA_INFO_CIRCLE "  Enable override to apply your selection");
+    } else {
+        ImGui::BeginChild("##device_panel", ImVec2(contentWidth, 410), true);
+        SectionTitle(ICON_FA_MICROCHIP, "DEVICE PROFILE", "Information reported by the Android system.");
+        DeviceInfoRow(ICON_FA_MOBILE_ALT, "Device", "ro.product.device");
+        DeviceInfoRow(ICON_FA_MOBILE, "Model", "ro.product.model");
+        DeviceInfoRow(ICON_FA_WINDOW, "Manufacturer", "ro.product.manufacturer");
+        DeviceInfoRow(ICON_FA_ROCKET, "Android", "ro.build.version.release");
+        DeviceInfoRow(ICON_FA_COG, "SDK level", "ro.build.version.sdk");
+        DeviceInfoRow(ICON_FA_MICROCHIP, "CPU ABI", "ro.product.cpu.abi");
+        ImGui::EndChild();
     }
 
+    ImGui::EndChild();
     ImGui::End();
-    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar();
 }
-
 
 
 inline EGLBoolean (*old_eglSwapBuffers)(EGLDisplay dpy, EGLSurface surface);
@@ -611,11 +669,9 @@ inline EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
   
   DrawLogo();
   DrawMenu();
-  
-  ImGui::End();
+
   ImGui::Render();
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-  ImGui::EndFrame();
   if (should_clear_mouse_pos) {
     io.MousePos = ImVec2(-1, -1);
     should_clear_mouse_pos = false;
