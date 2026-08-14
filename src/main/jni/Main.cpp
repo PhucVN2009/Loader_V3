@@ -47,6 +47,8 @@
 #include "imgui/Font.h"
 #include "imgui/Roboto-Regular.h"
 #include "QQInj.h"
+#include "modskin.h"
+#include "modmap.h"
 #include "imgui/Icon.h"
 #include "imgui/Iconcpp.h"
 #include "AutoUpdate/IL2CppSDKGenerator/Il2Cpp.h"
@@ -72,24 +74,6 @@ using zygisk::ServerSpecializeArgs;
 char packageName[] = "com.levelinfinite.sgameGlobal.midaspay";
 
 
-// You can write your hook here.
-//public int get_playerSkin() { }
-
-bool SkinHack = false;
-int skinID = 49;
-
-int (*org_skin)(void* instance);
-int new_skin(void*instance) {
-    if (SkinHack) {
-       return skinID;
-    }
-    return org_skin(instance);
-}
-
-
-
-
-
 void hack();
 void writeLog(const std::string& logMessage, const std::string& filename = "/storage/emulated/0/Android/data/com.waxmoon.ma.gp/files/log.txt");
 
@@ -102,7 +86,7 @@ public:
 
     void preAppSpecialize(AppSpecializeArgs *args) override {
         const char *process = env_->GetStringUTFChars(args->nice_name, nullptr);
-		
+
         is_game_ = (strcmp(process, packageName) == 0);
 
         env_->ReleaseStringUTFChars(args->nice_name, process);
@@ -132,9 +116,9 @@ void SetupImgui() {
   ImGui::CreateContext();
   ImGui_ImplAndroid_Init(nullptr);
   ImGuiIO& io = ImGui::GetIO();
-  
+
   SetYetAnotherDarkTheme(); //Theme
-  
+
   ImGuiStyle *style = &ImGui::GetStyle();
   ImGui::GetStyle().WindowTitleAlign = ImVec2(0.5f, 0.5f);
   ImGui::GetStyle().FrameBorderSize = 1.5f;
@@ -256,20 +240,17 @@ void BackGroundDots(int numberOfDots) {
   ImDrawList* draw_list = ImGui::GetWindowDrawList();
   ImVec2 windowSize = ImGui::GetIO().DisplaySize;
 
-  // Время для движения и цвета
   static auto lastTime = std::chrono::high_resolution_clock::now();
   auto currentTime = std::chrono::high_resolution_clock::now();
   std::chrono::duration < float > deltaTime = currentTime - lastTime;
   lastTime = currentTime;
   float t = std::chrono::duration < float > (currentTime.time_since_epoch()).count();
 
-  // Удаляем точки вне экрана
   points.erase(std::remove_if(points.begin(), points.end(), [&](const Point& p) {
     return (p.position.x < 0 - p.radius || p.position.x > windowSize.x + p.radius ||
       p.position.y < 0 - p.radius || p.position.y > windowSize.y + p.radius);
   }), points.end());
 
-  // Добавляем новые точки
   while (points.size() < numberOfDots) {
     Point newPoint;
     newPoint.position.x = randomFloat(0, windowSize.x);
@@ -280,13 +261,10 @@ void BackGroundDots(int numberOfDots) {
     points.push_back(newPoint);
   }
 
-  // Обновление и отрисовка точек
   for (int i = 0; i < points.size(); ++i) {
-    // Движение точки
     points[i].position.x += points[i].velocity.x * deltaTime.count();
     points[i].position.y += points[i].velocity.y * deltaTime.count();
 
-    // Отскок от границ
     if (points[i].position.x < 0) {
       points[i].position.x = 0; points[i].velocity.x *= -1;
     }
@@ -300,13 +278,11 @@ void BackGroundDots(int numberOfDots) {
       points[i].position.y = windowSize.y; points[i].velocity.y *= -1;
     }
 
-    // Динамический цвет точки (циклический)
     float r = 0.3f + 0.7f * (0.5f + 0.5f * sinf(t + i));
     float g = 0.3f + 0.7f * (0.5f + 0.5f * sinf(t + i + 2.0f));
     float b = 0.3f + 0.7f * (0.5f + 0.5f * sinf(t + i + 4.0f));
     ImVec4 dotColor = ImVec4(r, g, b, 0.8f);
 
-    // Соединение с другими точками
     float maxDist = 60.0f;
     for (int j = i + 1; j < points.size(); ++j) {
       float dx = points[i].position.x - points[j].position.x;
@@ -319,16 +295,13 @@ void BackGroundDots(int numberOfDots) {
       }
     }
 
-    // Отрисовка самой точки
     draw_list->AddCircleFilled(points[i].position, points[i].radius, ImGui::ColorConvertFloat4ToU32(dotColor));
   }
 }
 
 
 ImVec4 HSVtoRGB(float h, float s, float v) {
-  float r,
-  g,
-  b;
+  float r, g, b;
 
   int i = int(h * 6.0f);
   float f = h * 6.0f - i;
@@ -352,19 +325,18 @@ ImVec4 HSVtoRGB(float h, float s, float v) {
 #include <cstdio>
 
 time_t GetExpiryTimestamp(const char* expiry_date_str) {
-    // expiry_date_str format is "DD-MM-YY"
     struct tm expiry_tm = {0};
     int day, month, year;
     if (sscanf(expiry_date_str, "%d-%d-%d", &day, &month, &year) != 3) {
-        return 0; // invalid format fallback, never expires
+        return 0;
     }
     expiry_tm.tm_mday = day;
-    expiry_tm.tm_mon = month - 1; // tm_mon is 0-11
-    expiry_tm.tm_year = (year < 100) ? (year + 100) : year; // 2000-based year (e.g., 25 -> 2025)
+    expiry_tm.tm_mon = month - 1;
+    expiry_tm.tm_year = (year < 100) ? (year + 100) : year;
     expiry_tm.tm_hour = 0;
     expiry_tm.tm_min = 0;
     expiry_tm.tm_sec = 0;
-    expiry_tm.tm_isdst = -1; // let system determine
+    expiry_tm.tm_isdst = -1;
     return mktime(&expiry_tm);
 }
 
@@ -375,12 +347,11 @@ void DrawLogo() {
   if (!ImGuiOK) return;
   float hue = fmodf(ImGui::GetTime() * 0.1f, 1.0f);
   ImVec4 rainbow = HSVtoRGB(hue, 1.0f, 1.0f);
-  
-  static time_t expiry_timestamp = GetExpiryTimestamp("28-10-35"); // Add your Expiry date here. (Date/Month/year)
+
+  static time_t expiry_timestamp = GetExpiryTimestamp("28-10-35");
   time_t now = time(nullptr);
   ImVec2 window_size = ImGui::GetIO().DisplaySize;
 
-  // If expired, show expiry message centered and skip rest of menu
   if (now > expiry_timestamp && expiry_timestamp != 0) {
     ImGui::SetNextWindowBgAlpha(0.75f);
     ImGui::SetNextWindowPos(ImVec2(window_size.x / 2, window_size.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -389,7 +360,7 @@ void DrawLogo() {
     ImGui::Text("- Note : ModMenu is expired -");
     ImGui::End();
 	ImGui::PopStyleColor(1);
-    return; // Prevent drawing the rest of the menu when expired
+    return;
   }
 
   ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
@@ -398,29 +369,26 @@ void DrawLogo() {
   ImGuiWindowFlags_AlwaysAutoResize |
   ImGuiWindowFlags_NoTitleBar |
   ImGuiWindowFlags_NoBackground;
-  
+
   ImGui::Begin("Logo", nullptr, flags);
 
   float size = 100.0f;
   ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, size * 0.5f);
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 10));
 
-  // === Glass effect background (fake blur with alpha rect) ===
   ImVec2 pos = ImGui::GetCursorScreenPos();
   ImVec2 rect = ImVec2(pos.x + size, pos.y + size);
   ImDrawList* draw_list = ImGui::GetWindowDrawList();
-  draw_list->AddRectFilled(pos, rect, IM_COL32(255, 255, 255, 60), size * 0.5f); // frosted background
+  draw_list->AddRectFilled(pos, rect, IM_COL32(255, 255, 255, 60), size * 0.5f);
 
-  // === Transparent button colors ===
   ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 1.0f, 1.0f, 0.25f));
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.35f));
   ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.45f));
 
-  // === Animated text color (rainbow effect) ===
-  hue += ImGui::GetIO().DeltaTime * 0.3f; // Speed of color change
+  hue += ImGui::GetIO().DeltaTime * 0.3f;
   if (hue > 1.0f) hue -= 1.0f;
 
-  ImVec4 textColor = ImColor::HSV(hue, 0.8f, 1.0f); // HSV to RGB conversion
+  ImVec4 textColor = ImColor::HSV(hue, 0.8f, 1.0f);
   ImGui::PushStyleColor(ImGuiCol_Text, textColor);
 
   ImGui::Button(ICON_FA_POWER_OFF, ImVec2(size, size));
@@ -480,7 +448,7 @@ void DrawMenu() {
     ImVec4 rainbow = HSVtoRGB(hue, 1.0f, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_Separator, rainbow);
     ImGui::PushStyleColor(ImGuiCol_CheckMark, rainbow);
-    ImGui::TextColored(rainbow, ICON_FA_SUN " VIP MODMENU BY - YOUR NAME -");
+    ImGui::TextColored(rainbow, ICON_FA_SUN " Hok Mod - By Telegram @userKeera");
     ImGui::PopStyleColor();
     ImGui::Spacing();
     ImGui::Separator();
@@ -511,11 +479,76 @@ void DrawMenu() {
     ImGui::Spacing();
 
     if (activeFeature == 0) {
-        ImGui::Checkbox("Set Skin", &SkinHack);
-        ImGui::SliderInt("ID", &skinID, 1, 49);
-       
-        
-    } 
+
+        // ── Unlock Skin ───────────────────────────────────────────────────
+        if (ImGui::Checkbox("Unlock Skin", &unlockskin)) {
+            if (!unlockskin) CSProtocol::saveData::resetArrayUnpackSkin();
+        }
+
+        if (unlockskin) {
+            ImGui::Spacing();
+            ImGui::InputInt("Hero ID", &heroid);
+            ImGui::InputInt("Skin ID", &skinid);
+            ImGui::Spacing();
+
+            if (ImGui::Button("Apply Skin", ImVec2(-1, 55))) {
+                CSProtocol::saveData::setData((uint32_t)heroid, (uint16_t)skinid);
+                CSProtocol::saveData::setEnable(true);
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ── Guide (scrollable child window) ──────────────────────────
+            ImGui::TextColored(ImColor(255, 220, 0), ICON_FA_INFO_CIRCLE " How to use:");
+            ImGui::BeginChild("guide_scroll", ImVec2(-1, 200), true,
+                              ImGuiWindowFlags_HorizontalScrollbar);
+
+            ImGui::TextColored(ImColor(100, 220, 255),
+                "=== HOW TO USE UNLOCK SKIN ===");
+            ImGui::TextWrapped(
+                "1. Turn ON 'Unlock Skin' toggle.\n"
+                "2. Hero ID = 0 applies skin to ALL heroes.\n"
+                "   Set Hero ID > 0 to target a specific hero.\n"
+                "3. Enter Skin ID (0 = default skin).\n"
+                "4. Click 'Apply Skin'.\n"
+                "5. Enter a match, the skin will be unlocked.\n\n"
+                "Example: Allain Levi skin:\n"
+                "Hero ID = 0, Skin ID = 5 -> Apply Skin\n"
+                "Spam pick that skin ~5 times in lobby.\n"
+                "-> In-game Allain wears Levi skin.");
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::TextColored(ImColor(100, 255, 160),
+                "=== HUONG DAN UNLOCK SKIN ===");
+            ImGui::TextWrapped(
+                "1. Bat 'Unlock Skin'.\n"
+                "2. Hero ID = 0 ap dung cho TAT CA tuong.\n"
+                "   Hero ID > 0 chi ap dung cho tuong do.\n"
+                "3. Nhap Skin ID (0 = skin mac dinh).\n"
+                "4. Bam 'Apply Skin'.\n"
+                "5. Vao tran, skin se duoc mo khoa.\n\n"
+                "Vi du: Skin Levi cua Allain:\n"
+                "Hero ID = 0, Skin ID = 5 -> Apply Skin\n"
+                "Spam pick skin do ~5 lan trong lobby.\n"
+                "-> Trong tran Allain mac skin Levi.");
+
+            ImGui::EndChild();
+        }
+
+        // ── Map Hack ──────────────────────────────────────────────────────
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Checkbox("Map Hack", &maphack)) {}
+        ImGui::TextColored(ImColor(180, 230, 255),
+            "Reveal all enemies on map and minimap");
+    }
     else if (activeFeature == 1) {
         ImGui::Columns(2, "deviceInfo", false);
 
@@ -566,7 +599,7 @@ inline EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
 
   eglQuerySurface(dpy, surface, EGL_WIDTH, &g_GlWidth);
   eglQuerySurface(dpy, surface, EGL_HEIGHT, &g_GlHeight);
-  
+
   static bool should_clear_mouse_pos = false;
 
   if (!g_IsSetup) {
@@ -608,10 +641,10 @@ inline EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
       io.MouseDown[0] = false;
     }
   }
-  
+
   DrawLogo();
   DrawMenu();
-  
+
   ImGui::End();
   ImGui::Render();
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -625,29 +658,18 @@ inline EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
 }
 
 
-
-
-
-
-
 typedef unsigned long DWORD;
 static uintptr_t libBase;
 
 uintptr_t string2Offset(const char *c) {
   int base = 16;
-  // See if this function catches all possibilities.
-  // If it doesn't, the function would have to be amended
-  // whenever you add a combination of architecture and
-  // compiler that is not yet addressed.
   static_assert(sizeof(uintptr_t) == sizeof(unsigned long) || sizeof(uintptr_t) == sizeof(unsigned long long),
     "Please add string to handle conversion for this architecture.");
 
-  // Now choose the correct function ...
   if (sizeof(uintptr_t) == sizeof(unsigned long)) {
     return strtoul(c, nullptr, base);
   }
 
-  // All other options exhausted, sizeof(uintptr_t) == sizeof(unsigned long long))
   return strtoull(c, nullptr, base);
 }
 
@@ -791,6 +813,15 @@ bool is_current_process(const char* target_name) {
 
 
 
+// ── AnoSDK anti-cheat bypass ─────────────────────────────────────────────────
+// Intercept GetReportData variants so the SDK has nothing to upload.
+static int32_t (*_AnoSDKGetReportData)(char* buf, int32_t len)  = nullptr;
+static int32_t (*_AnoSDKGetReportData3)(char* buf, int32_t len) = nullptr;
+static int32_t (*_AnoSDKGetReportData4)(char* buf, int32_t len) = nullptr;
+static int32_t new_AnoSDKGetReportData(char* buf, int32_t len)  { return 0; }
+static int32_t new_AnoSDKGetReportData3(char* buf, int32_t len) { return 0; }
+static int32_t new_AnoSDKGetReportData4(char* buf, int32_t len) { return 0; }
+
 void hack_injec() {
   while (!unityMap.isValid()) {
     unityMap = KittyMemory::getLibraryBaseMap("libunity.so");
@@ -799,11 +830,126 @@ void hack_injec() {
   }
   sleep(5);
   Il2CppAttach("libil2cpp.so");
-  // Write Your bypass/AutoUpdate Hooks
-  DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "", "GameParamsScript", "get_playerSkin", 0), (void*)new_skin, (void**)&org_skin);
-  
-  
-  // DobbyHook(Il2CppGetMethodOffset("Assembly-CSharp.dll", "Namespace", "class", "method", 0), (void*)new_hook, (void**)&org_func);
+
+  // ── Unlock Skin hooks ────────────────────────────────────────────────────
+  void* skAddr;
+  skAddr = Il2CppGetMethodOffset("Scripts.Plugins.dll", "CSProtocol", "COMDT_HERO_COMMON_INFO", "unpack", 2);
+  if (skAddr) DobbyHook(skAddr, (void*)new_unpack, (void**)&_unpack);
+
+  skAddr = Il2CppGetMethodOffset("Scripts.Base.dll", "Assets.Scripts.GameSystem", "CRoleInfo", "IsCanUseSkin", 3);
+  if (skAddr) DobbyHook(skAddr, (void*)new_IsCanUseSkin, (void**)&_IsCanUseSkin);
+
+  skAddr = Il2CppGetMethodOffset("Scripts.Base.dll", "Assets.Scripts.GameSystem", "CRoleInfo", "IsHaveHeroSkin", 4);
+  if (skAddr) DobbyHook(skAddr, (void*)new_IsHaveHeroSkin, (void**)&_IsHaveHeroSkin);
+
+  skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "GetHeroWearSkinId", 1);
+  if (skAddr) DobbyHook(skAddr, (void*)new_GetHeroWearSkinId, (void**)&_GetHeroWearSkinId);
+
+  skAddr = Il2CppGetMethodOffset("Scripts.System.dll", "Assets.Scripts.GameSystem", "CSelectHeroFormLogic", "WearHeroSkin", 2);
+  if (skAddr) DobbyHook(skAddr, (void*)new_WearHeroSkin, (void**)&_WearHeroSkin);
+
+  // ── Map Hack hooks (FogOfWar – Scripts.GameCore.dll, global namespace) ────
+  void* mapAddr;
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "FogOfWar", "IsEnable", 0);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_FowIsEnable, (void**)&_FowIsEnable);
+
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "FogOfWar", "get_enable", 0);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_FowGetEnable, (void**)&_FowGetEnable);
+
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "FogOfWar", "get_EnableRender", 0);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_FowGetEnableRender, (void**)&_FowGetEnableRender);
+
+  // ActorLinker::SetVisible + ForceSetVisible – intercept server hide packets
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "SetVisible", 2);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_ActorSetVisible, (void**)&_ActorSetVisible);
+
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "ForceSetVisible", 2);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_ActorForceSetVisible, (void**)&_ActorForceSetVisible);
+
+  // SGC::CheckVisible – all visibility queries return true
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "CheckVisible", 3);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_CheckVisible, (void**)&_CheckVisible);
+
+  // ── Layer 4: position sync for out-of-sight actors ───────────────────────
+  // 4a: cache real position/direction from every movement packet we see
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "NtfActorMovementData", 1);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_NtfActorMovementData, (void**)&_NtfActorMovementData);
+
+  // 4b: cache isMoving flag
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "NtfActorMoveState", 2);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_NtfActorMoveState, (void**)&_NtfActorMoveState);
+
+  // 4c: Interpolation() – Unity render-loop path (fires after Layer 7 keeps actor in lists)
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "Interpolation", 0);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_Interpolation, (void**)&_Interpolation);
+
+  // 4d: HOK_OnInterpolation() – SGW engine path, fires for ALL actors unconditionally.
+  //     Dual-hooks position sync: if actor was removed from ActorManager lists before
+  //     Layer 7's skip takes effect this frame, this path still catches it.
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorLinker", "HOK_OnInterpolation", 0);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_HOKOnInterpolation, (void**)&_HOKOnInterpolation);
+
+  // Transform write helper: UnityEngine.Transform::set_position_Injected(ref Vector3)
+  {
+    void* tp = Il2CppGetMethodOffset("UnityEngine.CoreModule.dll", "UnityEngine", "Transform", "set_position_Injected", 1);
+    if (tp) _TransformSetPosInj = (void (*)(void*, float*))tp;
+  }
+
+  // ── Layer 5: HP sync for OOS actors ─────────────────────────────────────
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "OnActorCurHpChange", 3);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_OnActorCurHpChange, (void**)&_OnActorCurHpChange);
+
+  {
+    void* fn = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic",
+                                      "ValueLinkerComponent", "SetActorHp", 2);
+    if (fn) _SetActorHp = (void (*)(void*, int32_t, int32_t))fn;
+  }
+
+  // ── Layer 6: keep HP/buff callbacks alive (skip UnregisterEvt) ───────────
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "", "SGC", "OnActorLeaveView_UnregisterEvt", 1);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_OnActorLeaveViewUnregEvt, (void**)&_OnActorLeaveViewUnregEvt);
+
+  // ── Layer 7: skip ActorManager::OnActorLeaveView (instance method) ──────
+  // SGC::OnActorLeaveView is left to run normally so actor.SetVisible(false)
+  // still fires → Layer-2 hook captures it → g_oosSet populated for Layers 4c/5.
+  // Only the inner ActorManager::OnActorLeaveView is suppressed so the actor
+  // stays in HeroActors/SoldierActors/... → ActorManager::Interpolation()
+  // still iterates it every frame → Layer 4c fires → positions sync.
+  mapAddr = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic", "ActorManager", "OnActorLeaveView", 2);
+  if (mapAddr) DobbyHook(mapAddr, (void*)new_ActorMgrLeaveView, (void**)&_ActorMgrLeaveView);
+
+  // ── Layer 8: SGW display-buffer live positions for OOS actors ────────────
+  // Hook ActorManager::Interpolation() (instance method, runs every Unity frame).
+  // After the original finishes updating visible actors we call
+  // sync_oos_from_sgw_buffer() which scans SGW.GetDisplayData() for OOS actors
+  // and force-updates their Unity Transforms from the simulation's live data.
+  {
+    void* ami = Il2CppGetMethodOffset("Scripts.GameCore.dll", "Assets.Scripts.GameLogic",
+                                       "ActorManager", "Interpolation", 0);
+    if (ami) DobbyHook(ami, (void*)new_ActorMgrInterpolation, (void**)&_ActorMgrInterpolation);
+
+    // SGW.GetDisplayData / GetDisplayData_Count are STATIC methods – no instance.
+    // We resolve them as plain function pointers (no DobbyHook needed).
+    void* gd = Il2CppGetMethodOffset("Scripts.Base.dll", "", "SGW", "GetDisplayData", 0);
+    if (gd) _SGWGetDisplayData = (void*(*)())gd;
+
+    void* gdc = Il2CppGetMethodOffset("Scripts.Base.dll", "", "SGW", "GetDisplayData_Count", 0);
+    if (gdc) _SGWGetDisplayDataCount = (uint32_t(*)())gdc;
+  }
+
+  // ── AnoSDK bypass: hook report-data functions so no reports are uploaded ──
+  void* anogs = dlopen("libanogs.so", RTLD_NOLOAD);
+  if (anogs) {
+    void* fn;
+    fn = dlsym(anogs, "AnoSDKGetReportData");
+    if (fn) DobbyHook(fn, (void*)new_AnoSDKGetReportData, (void**)&_AnoSDKGetReportData);
+    fn = dlsym(anogs, "AnoSDKGetReportData3");
+    if (fn) DobbyHook(fn, (void*)new_AnoSDKGetReportData3, (void**)&_AnoSDKGetReportData3);
+    fn = dlsym(anogs, "AnoSDKGetReportData4");
+    if (fn) DobbyHook(fn, (void*)new_AnoSDKGetReportData4, (void**)&_AnoSDKGetReportData4);
+    dlclose(anogs);
+  }
+
   ImGuiOK = true;
 }
 
